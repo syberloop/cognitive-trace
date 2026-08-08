@@ -4,7 +4,7 @@ Obsidian plugin that animates the native graph in real time as an AI agent navig
 
 ## What it does
 
-Cognitive Trace reads `event_log.jsonl` — a stream of events emitted by the [OKF MCP Server](https://github.com/Jabar42/mcp-okf) — and visualizes them directly in Obsidian's graph view:
+Cognitive Trace reads `event_log.jsonl` — a stream of events emitted by the [OKF MCP Server](https://github.com/syberloop/mcp-okf) — and visualizes them directly in Obsidian's graph view:
 
 - **Nodes light up** when the agent traverses, reads, or creates concepts
 - **Edges pulse** when connections are discovered
