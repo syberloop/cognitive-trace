@@ -93,7 +93,7 @@ function makeEvent(result_nodes: string[]) {
         type: "tool" as const,
         session: "test",
         ts: "2026-07-19T04:00:00.000Z",
-        tool: "search",
+        tool: "okf_search",
         result_nodes,
     };
 }
@@ -103,7 +103,7 @@ function makeCreateEvent(created_path: string) {
         type: "tool" as const,
         session: "test",
         ts: "2026-07-19T04:00:00.000Z",
-        tool: "new",
+        tool: "okf_new",
         params: { created_path },
         exit_code: 0,
     };
@@ -217,7 +217,7 @@ describe("GraphAnimator replay audio sync", () => {
             type: "tool",
             session: "live",
             ts: "2026-07-19T04:00:00.000Z",
-            tool: "traverse",
+            tool: "okf_traverse",
             params: { slug: "Notes/live" },
             exit_code: 0,
         }]);
@@ -305,11 +305,11 @@ describe("GraphAnimator replay audio sync", () => {
 
         animator.loadHistory([{
             type: "tool", session: "history", ts: "2026-07-19T04:00:00.000Z",
-            tool: "traverse", params: { slug: "Notes/old" }, exit_code: 0,
+            tool: "okf_traverse", params: { slug: "Notes/old" }, exit_code: 0,
         }]);
         animator.processEvents([{
             type: "tool", session: "live", ts: "2026-07-19T04:02:00.000Z",
-            tool: "traverse", params: { slug: "Notes/new" }, exit_code: 0,
+            tool: "okf_traverse", params: { slug: "Notes/new" }, exit_code: 0,
         }]);
 
         expect(renderer.nodes[0].color).toBeNull();
@@ -328,7 +328,7 @@ describe("GraphAnimator replay audio sync", () => {
 
         animator.processEvents([{
             type: "tool", session: "live", ts: "2026-07-19T04:00:00.000Z",
-            tool: "new", params: { created_path: "insights/delayed.md" }, exit_code: 0,
+            tool: "okf_new", params: { created_path: "insights/delayed.md" }, exit_code: 0,
         }]);
         expect(audio.oscillators).toHaveLength(0);
 
