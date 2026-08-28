@@ -29,7 +29,7 @@ The MCP server writes JSONL events to `.obsidian/plugins/cognitive-trace/event_l
 ## Requirements
 
 - Obsidian >= 1.5.0
-- [OKF MCP Server](https://github.com/Jabar42/mcp-okf) (emits the events)
+- [OKF MCP Server](https://github.com/syberloop/mcp-okf) (emits the events)
 - Desktop only (uses Obsidian's graph renderer internals)
 
 ## Installation
@@ -38,7 +38,7 @@ The MCP server writes JSONL events to `.obsidian/plugins/cognitive-trace/event_l
 
 ```bash
 cd /path/to/your-vault/.obsidian/plugins
-git clone https://github.com/Jabar42/cognitive-trace.git
+git clone https://github.com/syberloop/cognitive-trace.git
 cd cognitive-trace
 npm install
 npm run build
