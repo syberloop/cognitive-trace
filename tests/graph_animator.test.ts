@@ -359,3 +359,81 @@ describe("GraphAnimator replay audio sync", () => {
         expect(link.line.width).toBe(7.5);
     });
 });
+
+describe("GraphAnimator capas del dashboard", () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.spyOn(performance, "now").mockReturnValue(1000);
+        vi.stubGlobal("AudioContext", FakeAudioContext);
+        vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+        vi.stubGlobal("window", globalThis);
+        FakeAudioContext.instances = [];
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+    });
+
+    function appWith(renderer: ReturnType<typeof makeRenderer>) {
+        return { workspace: { on: vi.fn(), getLeavesOfType: vi.fn(() => [{ view: { renderer } }]) } } as any;
+    }
+
+    it("applyLayer colorea nodos por slug y live devuelve el grafo a la traza", () => {
+        const renderer = makeRenderer(["Notes/alpha.md", "Notes/beta.md"]);
+        const animator = new GraphAnimator(appWith(renderer), { ...DEFAULT_SETTINGS });
+
+        animator.applyLayer("heat", [{ slug: "Notes/alpha.md", color: "#FF4136" }]);
+
+        expect(renderer.nodes[0].color?.rgb).toBe(0xFF4136);
+        expect(renderer.nodes[1].color).toBeNull();
+
+        animator.applyLayer("live", []);
+
+        expect(renderer.nodes[0].color).toBeNull();
+        expect(renderer.nodes[1].color).toBeNull();
+    });
+
+    it("la capa tiene prioridad sobre el color de la traza en vivo", () => {
+        const renderer = makeRenderer(["Notes/alpha.md"]);
+        const animator = new GraphAnimator(appWith(renderer), { ...DEFAULT_SETTINGS });
+
+        animator.processEvents([{
+            type: "tool",
+            session: "live",
+            ts: "2026-07-19T04:00:00.000Z",
+            tool: "okf_traverse",
+            params: { slug: "Notes/alpha" },
+            exit_code: 0,
+        }]);
+        expect(renderer.nodes[0].color?.rgb).toBe(0xFFD700); // colorCurrent
+
+        animator.applyLayer("heat", [{ slug: "Notes/alpha.md", color: "#FFDC00" }]);
+        expect(renderer.nodes[0].color?.rgb).toBe(0xFFDC00);
+
+        animator.applyLayer("live", []);
+        expect(renderer.nodes[0].color?.rgb).toBe(0xFFD700);
+    });
+
+    it("no dispara pulsos ni beeps al aplicar una capa", () => {
+        const renderer = makeRenderer(["Notes/alpha.md", "Notes/beta.md"]);
+        const animator = new GraphAnimator(appWith(renderer), { ...DEFAULT_SETTINGS });
+
+        animator.applyLayer("cyber", [
+            { slug: "Notes/alpha.md", color: "#2ECC40" },
+            { slug: "Notes/beta.md", color: "#FFDC00" },
+        ]);
+
+        expect(renderer.nodes[0].color?.rgb).toBe(0x2ECC40);
+        expect(renderer.nodes[1].color?.rgb).toBe(0xFFDC00);
+        expect((animator as any).pulses).toHaveLength(0);
+        expect(FakeAudioContext.instances).toHaveLength(0);
+    });
+
+    it("sin grafo abierto, applyLayer no falla", () => {
+        const app = { workspace: { on: vi.fn(), getLeavesOfType: vi.fn(() => []) } } as any;
+        const animator = new GraphAnimator(app, { ...DEFAULT_SETTINGS });
+
+        expect(() => animator.applyLayer("heat", [{ slug: "x", color: "#FF4136" }])).not.toThrow();
+    });
+});

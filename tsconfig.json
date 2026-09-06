@@ -11,5 +11,5 @@
     "inlineSourceMap": true,
     "inlineSources": true
   },
-  "include": ["main.ts", "event_reader.ts", "graph_animator.ts", "timeline_view.ts"]
+  "include": ["main.ts", "event_reader.ts", "graph_animator.ts", "timeline_view.ts", "dashboard_view.ts"]
 }

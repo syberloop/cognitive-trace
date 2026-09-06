@@ -3,6 +3,7 @@ import { Plugin, Notice } from "obsidian";
 import { EventReader, TraceEvent } from "./event_reader";
 import { GraphAnimator } from "./graph_animator";
 import { TimelineView, TIMELINE_VIEW_TYPE } from "./timeline_view";
+import { DashboardView, DASHBOARD_VIEW_TYPE } from "./dashboard_view";
 import { CTSettings, DEFAULT_SETTINGS, CTSettingTab } from "./settings";
 
 const MAX_BUFFER_EVENTS = 500;
@@ -141,11 +142,27 @@ export default class CognitiveTracePlugin extends Plugin {
             }
         );
 
+        // Registrar vista Dashboard — lee dashboard.json del vault y controla
+        // las capas de color del grafo (Heat/Cyber/Stale/Session Diff)
+        this.registerView(
+            DASHBOARD_VIEW_TYPE,
+            (leaf) => new DashboardView(leaf, vaultPath, (layer, nodes) => {
+                this.animator?.applyLayer(layer, nodes);
+            })
+        );
+
         // Comando: abrir/cerrar timeline
         this.addCommand({
             id: "open-timeline",
             name: "Open Cognitive Trace timeline",
             callback: () => this.activateTimeline(),
+        });
+
+        // Comando: abrir dashboard
+        this.addCommand({
+            id: "open-dashboard",
+            name: "Dashboard OKF: abrir panel",
+            callback: () => this.activateDashboard(),
         });
 
         // Comando: toggle animación
@@ -193,6 +210,7 @@ export default class CognitiveTracePlugin extends Plugin {
         this.animator?.destroy();
         this.animator?.reset();
         this.app.workspace.detachLeavesOfType(TIMELINE_VIEW_TYPE);
+        this.app.workspace.detachLeavesOfType(DASHBOARD_VIEW_TYPE);
     }
 
     async activateTimeline(): Promise<void> {
@@ -202,6 +220,19 @@ export default class CognitiveTracePlugin extends Plugin {
             const rightLeaf = workspace.getRightLeaf(false);
             if (rightLeaf) {
                 await rightLeaf.setViewState({ type: TIMELINE_VIEW_TYPE, active: true });
+                leaf = rightLeaf;
+            }
+        }
+        if (leaf) workspace.revealLeaf(leaf);
+    }
+
+    async activateDashboard(): Promise<void> {
+        const { workspace } = this.app;
+        let leaf = workspace.getLeavesOfType(DASHBOARD_VIEW_TYPE)[0];
+        if (!leaf) {
+            const rightLeaf = workspace.getRightLeaf(false);
+            if (rightLeaf) {
+                await rightLeaf.setViewState({ type: DASHBOARD_VIEW_TYPE, active: true });
                 leaf = rightLeaf;
             }
         }

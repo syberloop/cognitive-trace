@@ -21,6 +21,9 @@ export class GraphAnimator {
     // Referencia al Set del timeline; se asigna desde main.ts
     activePipes: Set<string> | null = null;
     private commandHighlights = new Map<string, string>();
+    // Capa de visualización del DashboardView (Heat/Cyber/Stale/Session Diff):
+    // mapa slug → color fijo. null = capa Live (traza en vivo normal).
+    private layerColors: Map<string, string> | null = null;
     private highlightedPath: string[] = [];
     // Pulsos: onda expansiva cuando un nodo se pinta por primera vez o pasa a current.
     // Se marcan por cambio de estado lógico (no por transición de color) para que los
@@ -532,6 +535,19 @@ export class GraphAnimator {
         setTimeout(() => this.patchAndRefresh(), 1250);
     }
 
+    /** Aplicar una capa de visualización (DashboardView). Las capas son vistas
+     *  del grafo alimentadas por el snapshot: cada slug recibe un color fijo
+     *  con prioridad sobre la traza en vivo. "live" (o lista vacía) devuelve
+     *  el grafo a su comportamiento normal. Sin grafo abierto: no-op. */
+    applyLayer(layer: string, nodes: Array<{ slug: string; color: string }>): void {
+        if (layer === "live" || !nodes || nodes.length === 0) {
+            this.layerColors = null;
+        } else {
+            this.layerColors = new Map(nodes.map((n) => [n.slug, n.color]));
+        }
+        this.patchAndRefresh();
+    }
+
     reset(): void {
         this.clearTraceState();
         this.nodePipes.clear();
@@ -649,6 +665,22 @@ export class GraphAnimator {
                     }
                 }
                 continue;
+            }
+
+            // ── Capa activa del DashboardView: prioridad sobre la traza.
+            // Los nodos sin dato de capa conservan su color de traza normal.
+            // Sin pulsos: recolorear el grafo entero no es un evento del agente.
+            if (this.layerColors) {
+                let layerColor: number | null = null;
+                for (const [ls, lc] of this.layerColors) {
+                    if (this.nodeMatches(path, ls)) { layerColor = this.hex(lc); break; }
+                }
+                if (layerColor != null) {
+                    if (!node.color || node.color.rgb !== layerColor) {
+                        node.color = { a: 1, rgb: layerColor };
+                    }
+                    continue;
+                }
             }
 
             let targetColor: number | null = null;
