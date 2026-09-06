@@ -1,4 +1,5 @@
-// dashboard_view.ts — Panel "Dashboard OKF" (Fase 2: tarjetas KPI + Fase 3: capas)
+// dashboard_view.ts — Panel "Dashboard OKF" (Fase 2: tarjetas KPI + Fase 3: capas
+// + Fase 4: pestaña Conceptos — tabla clicable con estados)
 // Lee dashboard.json de la raíz del vault (generado por el CLI del ecosistema)
 // y los últimos 30 snapshots diarios de sistema/dashboard-snapshots/ para los
 // sparklines. No llama a ningún MCP/CLI: solo lee archivos del vault.
@@ -11,6 +12,7 @@ import { ItemView, WorkspaceLeaf } from "obsidian";
 export const DASHBOARD_VIEW_TYPE = "cognitive-trace-dashboard";
 
 export type DashboardLayer = "live" | "heat" | "cyber" | "stale" | "session_diff";
+export type DashboardTab = "resumen" | "conceptos";
 
 export interface LayerNodeColor {
     slug: string;
@@ -45,6 +47,27 @@ interface TopNeglectedEntry {
     slug?: string;
     days_since_last_visit?: number;
     stale_score?: number;
+}
+
+/** Un nodo de la sección conceptos[] del snapshot (generada por el CLI).
+ *  Lectura tolerante: cualquier campo puede faltar o ser null. */
+export interface ConceptoEntry {
+    file?: string;
+    type?: string;
+    title?: string;
+    status?: string;
+    timestamp?: string;
+    stale?: {
+        level?: string; // "FRESCO" | "ATENCION" | "STALE"
+        signal_count?: number;
+        signals?: string[];
+    };
+    cyber?: {
+        outcome?: string; // "pending" | "success" | "failure" | "deprecated" | ...
+        review_on?: string | null;
+        vencido?: boolean;
+        target_metric?: string | null;
+    } | null;
 }
 
 /** Snapshot del CLI (Fase 1 del plan). Lectura tolerante: cualquier campo
@@ -100,6 +123,7 @@ export interface DashboardSnapshot {
         top_neglected?: TopNeglectedEntry[];
         stale_distribution?: Record<string, number>;
     };
+    conceptos?: ConceptoEntry[]; // Fase 4: detalle por nodo (tabla de Conceptos)
     negocio?: unknown; // null en Fase 2 — placeholder
     // Diff de sesiones (opcional — requiere 2 session_ids)
     session_diff?: { solo_a?: string[]; solo_b?: string[]; ambas?: string[] };
@@ -112,6 +136,22 @@ const LAYER_DEFS: Array<{ key: DashboardLayer; label: string }> = [
     { key: "stale", label: "Stale" },
     { key: "session_diff", label: "Session Diff" },
 ];
+
+const TAB_DEFS: Array<{ key: DashboardTab; label: string }> = [
+    { key: "resumen", label: "Resumen" },
+    { key: "conceptos", label: "Conceptos" },
+];
+
+type ConceptStateFilter = "todos" | "atencion" | "cyber" | "stale";
+
+const STATE_FILTER_DEFS: Array<{ value: ConceptStateFilter; label: string }> = [
+    { value: "todos", label: "Todos" },
+    { value: "atencion", label: "Solo atención" },
+    { value: "cyber", label: "Con cyber" },
+    { value: "stale", label: "Solo stale" },
+];
+
+const CONCEPT_PAGE_SIZE = 50;
 
 const LAYER_LEGENDS: Record<DashboardLayer, Array<[string, string]>> = {
     live: [["traza en vivo", "#FFD700"]],
@@ -245,6 +285,15 @@ export class DashboardView extends ItemView {
     private data: DashboardSnapshot | null = null;
     private loadError = false;
     private activeLayer: DashboardLayer = "live";
+    // Pestaña activa: estado de instancia (no settings). Un panel recién abierto
+    // arranca en Resumen — el KPI es la vista principal y evita sorpresas de
+    // estado heredado de una sesión anterior del panel.
+    private activeTab: DashboardTab = "resumen";
+    // Estado de la tabla de Conceptos
+    private conceptSearch = "";
+    private conceptTypeFilter = "todos";
+    private conceptStateFilter: ConceptStateFilter = "todos";
+    private conceptPage = 0;
     // Series diarias para sparklines: una por tarjeta, punto por snapshot
     private series: {
         health: Array<number | null>;
@@ -364,6 +413,26 @@ export class DashboardView extends ItemView {
             this.render();
         });
 
+        // ── Pestañas (Fase 4): Resumen | Conceptos ──
+        const tabs = container.createEl("div", { cls: "dashboard-tabs" });
+        for (const def of TAB_DEFS) {
+            const tab = tabs.createEl("button", {
+                cls: "dashboard-tab-chip"
+                    + (this.activeTab === def.key ? " dashboard-tab-active" : ""),
+            });
+            tab.setText(def.label);
+            tab.addEventListener("click", () => {
+                if (this.activeTab === def.key) return;
+                this.activeTab = def.key;
+                this.render();
+            });
+        }
+
+        if (this.activeTab === "conceptos") {
+            this.renderConceptosTab(container);
+            return;
+        }
+
         // ── Selector de capas sobre el grafo (Fase 3) ──
         const layersBar = container.createEl("div", { cls: "dashboard-layers" });
         for (const def of LAYER_DEFS) {
@@ -410,6 +479,231 @@ export class DashboardView extends ItemView {
             dot.style.backgroundColor = color;
             item.createEl("span", { text: label });
         }
+    }
+
+    // ── Pestaña Conceptos (Fase 4) ──
+
+    /** Toolbar (buscador + filtros) fijo + contenido paginado. El toolbar no se
+     *  re-renderiza al filtrar: solo se reconstruye el contenido, para no perder
+     *  el foco del input de búsqueda mientras se escribe. */
+    private renderConceptosTab(container: HTMLElement): void {
+        const toolbar = container.createEl("div", { cls: "dashboard-concept-toolbar" });
+
+        const search = toolbar.createEl("input", { cls: "dashboard-concept-search" }) as HTMLInputElement;
+        search.setAttribute("type", "text");
+        search.setAttribute("placeholder", "Buscar por título o archivo…");
+        search.setAttribute("aria-label", "Buscar concepto");
+        search.value = this.conceptSearch;
+
+        // Filtro por tipo: "Todos" + los tipos presentes en el snapshot
+        const types = this.conceptTypes();
+        if (this.conceptTypeFilter !== "todos" && !types.includes(this.conceptTypeFilter)) {
+            this.conceptTypeFilter = "todos"; // el tipo dejó de existir tras un refresh
+        }
+        const typeSelect = toolbar.createEl("select", { cls: "dashboard-concept-type-filter" }) as HTMLSelectElement;
+        typeSelect.setAttribute("aria-label", "Filtrar por tipo");
+        const typeAll = typeSelect.createEl("option", { text: "Todos" });
+        typeAll.setAttribute("value", "todos");
+        for (const t of types) {
+            const opt = typeSelect.createEl("option", { text: t });
+            opt.setAttribute("value", t);
+        }
+        typeSelect.value = this.conceptTypeFilter;
+
+        const stateSelect = toolbar.createEl("select", { cls: "dashboard-concept-state-filter" }) as HTMLSelectElement;
+        stateSelect.setAttribute("aria-label", "Filtrar por estado");
+        for (const def of STATE_FILTER_DEFS) {
+            const opt = stateSelect.createEl("option", { text: def.label });
+            opt.setAttribute("value", def.value);
+        }
+        stateSelect.value = this.conceptStateFilter;
+
+        const content = container.createEl("div", { cls: "dashboard-concept-content" });
+        this.renderConceptosContent(content);
+
+        search.addEventListener("input", (ev) => {
+            this.conceptSearch = (ev.target as HTMLInputElement).value;
+            this.conceptPage = 0;
+            this.renderConceptosContent(content);
+        });
+        typeSelect.addEventListener("change", (ev) => {
+            this.conceptTypeFilter = (ev.target as HTMLSelectElement).value;
+            this.conceptPage = 0;
+            this.renderConceptosContent(content);
+        });
+        stateSelect.addEventListener("change", (ev) => {
+            this.conceptStateFilter = (ev.target as HTMLSelectElement).value as ConceptStateFilter;
+            this.conceptPage = 0;
+            this.renderConceptosContent(content);
+        });
+    }
+
+    /** Tabla paginada (o mensaje de snapshot viejo). Reconstruye el contenido
+     *  desde el estado actual de filtros/búsqueda/página. */
+    private renderConceptosContent(container: HTMLElement): void {
+        container.empty();
+        const conceptos = this.data?.conceptos ?? [];
+
+        if (conceptos.length === 0) {
+            const empty = container.createEl("div", { cls: "dashboard-empty" });
+            empty.createEl("div", { text: "El snapshot no trae la sección conceptos — ejecutá el snapshot actualizado" });
+            empty.createEl("div", { cls: "dashboard-empty-detail", text: "python3 -m cli dashboard-snapshot" });
+            return;
+        }
+
+        const filtered = this.filterConceptos(conceptos);
+        const total = filtered.length;
+        const totalPages = Math.max(1, Math.ceil(total / CONCEPT_PAGE_SIZE));
+        const page = Math.min(this.conceptPage, totalPages - 1);
+
+        if (total === 0) {
+            const empty = container.createEl("div", { cls: "dashboard-empty" });
+            empty.createEl("div", { text: "Ningún concepto coincide con los filtros" });
+            return;
+        }
+
+        const start = page * CONCEPT_PAGE_SIZE;
+        const slice = filtered.slice(start, start + CONCEPT_PAGE_SIZE);
+
+        const wrap = container.createEl("div", { cls: "dashboard-concept-table-wrap" });
+        const table = wrap.createEl("table", { cls: "dashboard-concept-table" });
+        const thead = table.createEl("thead");
+        const headRow = thead.createEl("tr", { cls: "dashboard-concept-head" });
+        for (const label of ["Concepto", "Tipo", "Status", "Cyber", "Stale"]) {
+            headRow.createEl("th", { text: label });
+        }
+        const tbody = table.createEl("tbody");
+        for (const entry of slice) {
+            this.renderConceptRow(tbody, entry);
+        }
+
+        // Paginación
+        const pager = container.createEl("div", { cls: "dashboard-pager" });
+        const prev = pager.createEl("button", { cls: "dashboard-pager-btn", text: "‹" });
+        prev.setAttribute("aria-label", "Página anterior");
+        if (page === 0) prev.addClass("dashboard-pager-disabled");
+        const next = pager.createEl("button", { cls: "dashboard-pager-btn", text: "›" });
+        next.setAttribute("aria-label", "Página siguiente");
+        if (page >= totalPages - 1) next.addClass("dashboard-pager-disabled");
+        pager.createEl("span", {
+            cls: "dashboard-pager-label",
+            text: `${start + 1}–${Math.min(start + CONCEPT_PAGE_SIZE, total)} de ${total}`,
+        });
+        prev.addEventListener("click", () => {
+            if (page > 0) { this.conceptPage = page - 1; this.renderConceptosContent(container); }
+        });
+        next.addEventListener("click", () => {
+            if (page < totalPages - 1) { this.conceptPage = page + 1; this.renderConceptosContent(container); }
+        });
+    }
+
+    private renderConceptRow(tbody: HTMLElement, entry: ConceptoEntry): void {
+        const file = entry.file ?? "";
+        const row = tbody.createEl("tr", { cls: "dashboard-concept-row" });
+        if (file) row.setAttribute("data-file", file);
+
+        // Concepto: title (o file) — clic abre la nota en Obsidian
+        const name = row.createEl("td", { cls: "dashboard-concept-name" });
+        name.setText(entry.title || file || "—");
+        name.title = file ? `${file}.md — abrir nota` : "";
+        row.addEventListener("click", () => {
+            if (!file) return;
+            this.app.workspace.openLinkText(file, "", false);
+        });
+
+        // Tipo: texto con color sutil por categoría
+        const type = row.createEl("td", { cls: "dashboard-concept-type" });
+        type.setText(entry.type || "—");
+        if (entry.type) type.style.color = this.typeColor(entry.type);
+
+        // Status del frontmatter
+        const status = row.createEl("td", { cls: "dashboard-concept-status" });
+        status.setText(entry.status || "—");
+
+        // Cyber: ícono + color por estado, tooltip con detalle
+        const cyber = this.cyberBadge(entry.cyber);
+        const cyberTd = row.createEl("td", { cls: "dashboard-concept-cyber" });
+        cyberTd.createEl("span", { cls: `dashboard-cyber-badge ${cyber.cls}`, text: cyber.glyph });
+        if (cyber.title) cyberTd.title = cyber.title;
+
+        // Stale: nivel coloreado, tooltip con la señal principal
+        const stale = this.staleBadge(entry.stale);
+        const staleTd = row.createEl("td", { cls: "dashboard-concept-stale" });
+        staleTd.createEl("span", { cls: `dashboard-stale-badge ${stale.cls}`, text: stale.label });
+        if (stale.title) staleTd.title = stale.title;
+    }
+
+    /** "Requiere atención": stale no FRESCO, review vencido, u outcome pending/failure. */
+    private requiresAttention(entry: ConceptoEntry): boolean {
+        const level = entry.stale?.level;
+        if (level && level !== "FRESCO") return true;
+        if (entry.cyber?.vencido) return true;
+        const outcome = entry.cyber?.outcome;
+        return outcome === "failure" || outcome === "pending";
+    }
+
+    private filterConceptos(list: ConceptoEntry[]): ConceptoEntry[] {
+        const q = this.conceptSearch.trim().toLowerCase();
+        return list.filter((e) => {
+            if (q) {
+                const hay = (e.title ?? "").toLowerCase().includes(q)
+                    || (e.file ?? "").toLowerCase().includes(q);
+                if (!hay) return false;
+            }
+            if (this.conceptTypeFilter !== "todos" && e.type !== this.conceptTypeFilter) return false;
+            switch (this.conceptStateFilter) {
+                case "cyber": if (!e.cyber) return false; break;
+                case "stale": if (e.stale?.level !== "STALE") return false; break;
+                case "atencion": if (!this.requiresAttention(e)) return false; break;
+            }
+            return true;
+        });
+    }
+
+    private conceptTypes(): string[] {
+        const seen = new Set<string>();
+        for (const e of this.data?.conceptos ?? []) {
+            if (e.type) seen.add(e.type);
+        }
+        return Array.from(seen).sort((a, b) => a.localeCompare(b));
+    }
+
+    /** Color sutil estable por tipo (hash → paleta apagada, legible en ambos themes). */
+    private typeColor(type: string): string {
+        const palette = ["#7C9CBF", "#9CB57C", "#BF9C7C", "#B57C9C", "#7CBFB5", "#B5A87C"];
+        let hash = 0;
+        for (let i = 0; i < type.length; i++) hash = (hash * 31 + type.charCodeAt(i)) >>> 0;
+        return palette[hash % palette.length];
+    }
+
+    private cyberBadge(cyber: ConceptoEntry["cyber"]): { glyph: string; cls: string; title: string } {
+        if (!cyber) return { glyph: "—", cls: "dashboard-cyber-none", title: "sin bloque cibernético" };
+        const parts: string[] = [];
+        if (cyber.outcome) parts.push(`outcome ${cyber.outcome}`);
+        if (cyber.vencido) parts.push("vencido");
+        if (cyber.review_on) parts.push(`review ${cyber.review_on}`);
+        if (cyber.target_metric) parts.push(`métrica ${cyber.target_metric}`);
+        const title = parts.join(" · ");
+        // vencido tiene prioridad sobre el outcome
+        if (cyber.vencido) return { glyph: "!", cls: "dashboard-cyber-expired", title };
+        switch (cyber.outcome) {
+            case "success": return { glyph: "✓", cls: "dashboard-cyber-success", title };
+            case "pending": return { glyph: "⏳", cls: "dashboard-cyber-pending", title };
+            case "failure": return { glyph: "✗", cls: "dashboard-cyber-failure", title };
+            default: return { glyph: "·", cls: "dashboard-cyber-none", title: title || "bloque sin outcome" };
+        }
+    }
+
+    private staleBadge(stale: ConceptoEntry["stale"]): { label: string; cls: string; title: string } {
+        if (!stale?.level) return { label: "—", cls: "dashboard-stale-none", title: "" };
+        let cls: string;
+        switch (stale.level) {
+            case "FRESCO": cls = "dashboard-stale-fresco"; break;
+            case "ATENCION": cls = "dashboard-stale-atencion"; break;
+            case "STALE": cls = "dashboard-stale-stale"; break;
+            default: cls = "dashboard-stale-none";
+        }
+        return { label: stale.level, cls, title: stale.signals?.[0] ?? "" };
     }
 
     private renderCard(grid: HTMLElement, opts: CardOpts): void {

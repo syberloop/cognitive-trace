@@ -28,6 +28,7 @@ class FakeElement {
     title = "";
     width = 0;
     height = 0;
+    value = "";
     attributes = new Map<string, string>();
     private listeners = new Map<string, (event: any) => void>();
 
@@ -46,6 +47,8 @@ class FakeElement {
     setAttribute(name: string, value: string): void { this.attributes.set(name, value); }
     addEventListener(name: string, listener: (event: any) => void): void { this.listeners.set(name, listener); }
     click(): void { this.listeners.get("click")?.({ stopPropagation: vi.fn() }); }
+    /** Dispara un evento arbitrario (input/change) como lo haría el navegador. */
+    dispatch(name: string, event: any = {}): void { this.listeners.get(name)?.(event); }
 
     querySelector(selector: string): FakeElement | null {
         return this.querySelectorAll(selector)[0] || null;
@@ -121,10 +124,17 @@ function snapshotJson(overrides: Record<string, unknown> = {}): string {
     }, null, 2);
 }
 
-function makeView(vaultPath: string, onLayerApply = vi.fn()) {
+function makeView(vaultPath: string, onLayerApply = vi.fn(), app?: any) {
     const root = makeRoot();
-    const view = new DashboardView({ containerEl: root } as any, vaultPath, onLayerApply);
+    const leaf: any = { containerEl: root };
+    if (app) leaf.app = app;
+    const view = new DashboardView(leaf, vaultPath, onLayerApply);
     return { root, view, onLayerApply };
+}
+
+/** Abre la pestaña Conceptos (chip index 1) tras el onOpen. */
+function openConceptosTab(root: FakeElement): void {
+    root.querySelectorAll(".dashboard-tab-chip")[1].click();
 }
 
 describe("DashboardView", () => {
@@ -285,6 +295,246 @@ describe("DashboardView", () => {
         root.querySelector(".dashboard-refresh-btn")?.click();
 
         expect(root.querySelectorAll(".kpi-value").map((el) => el.textContent)).toContain("7");
+    });
+});
+
+// ── Fixture de conceptos (Fase 4) ──
+
+const CONCEPTOS_FIXTURE = [
+    {
+        file: "insights/cibernetica-y-review",
+        type: "Insight",
+        title: "Cibernética y revisiones",
+        status: "activo",
+        timestamp: "2026-09-01T10:00:00-05:00",
+        stale: { level: "FRESCO", signal_count: 0, signals: [] },
+        cyber: null,
+    },
+    {
+        file: "decisions/loop-cibernetico",
+        type: "Decision",
+        title: "Loop cibernético",
+        status: "propuesta",
+        timestamp: "2026-09-02T10:00:00-05:00",
+        stale: { level: "ATENCION", signal_count: 1, signals: ["no backlinks"] },
+        cyber: { outcome: "pending", review_on: "2026-09-10", vencido: false, target_metric: "loop_closure" },
+    },
+    {
+        file: "planes/plan-q3",
+        type: "Plan",
+        title: "Plan Q3",
+        status: "aplicada",
+        timestamp: "2026-09-03T10:00:00-05:00",
+        stale: { level: "FRESCO", signal_count: 0, signals: [] },
+        cyber: { outcome: "success", review_on: "2026-09-20", vencido: true, target_metric: null },
+    },
+    {
+        file: "research/grafo-okf",
+        type: "Research",
+        title: "Grafo OKF",
+        status: "",
+        timestamp: "2026-09-04T10:00:00-05:00",
+        stale: { level: "STALE", signal_count: 2, signals: ["30d sin visita", "no backlinks"] },
+        cyber: null,
+    },
+];
+
+describe("DashboardView — pestaña Conceptos", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        for (const dir of tempDirs.splice(0)) {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("la tabla renderiza las filas del fixture con sus estados", async () => {
+        const vault = makeVault({ "dashboard.json": snapshotJson({ conceptos: CONCEPTOS_FIXTURE }) });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+        openConceptosTab(root);
+
+        const rows = root.querySelectorAll(".dashboard-concept-row");
+        expect(rows).toHaveLength(4);
+
+        // Fila 1: FRESCO sin cyber — columnas en orden Concepto/Tipo/Status/Cyber/Stale
+        const [name, type, status, cyber, stale] = rows[0].children;
+        expect(name.textContent).toBe("Cibernética y revisiones");
+        expect(type.textContent).toBe("Insight");
+        expect(status.textContent).toBe("activo");
+        expect(cyber.children[0].textContent).toBe("—");
+        expect(stale.children[0].textContent).toBe("FRESCO");
+        expect(stale.children[0].classList.contains("dashboard-stale-fresco")).toBe(true);
+
+        // Fila 2: ATENCION + cyber pending, tooltip con review y métrica
+        const row2 = rows[1].children;
+        expect(row2[3].children[0].textContent).toBe("⏳");
+        expect(row2[3].children[0].classList.contains("dashboard-cyber-pending")).toBe(true);
+        expect(row2[3].title).toContain("review 2026-09-10");
+        expect(row2[3].title).toContain("loop_closure");
+        expect(row2[4].children[0].classList.contains("dashboard-stale-atencion")).toBe(true);
+
+        // Fila 3: vencido tiene prioridad sobre outcome success
+        const row3 = rows[2].children;
+        expect(row3[3].children[0].textContent).toBe("!");
+        expect(row3[3].children[0].classList.contains("dashboard-cyber-expired")).toBe(true);
+
+        // Fila 4: STALE con señal principal como tooltip, status vacío → "—"
+        const row4 = rows[3].children;
+        expect(row4[2].textContent).toBe("—");
+        expect(row4[4].children[0].textContent).toBe("STALE");
+        expect(row4[4].children[0].classList.contains("dashboard-stale-stale")).toBe(true);
+        expect(row4[4].title).toBe("30d sin visita");
+    });
+
+    it("el buscador filtra por título y por file (case-insensitive)", async () => {
+        const vault = makeVault({ "dashboard.json": snapshotJson({ conceptos: CONCEPTOS_FIXTURE }) });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+        openConceptosTab(root);
+
+        const search = root.querySelector(".dashboard-concept-search")!;
+        const names = () => root.querySelectorAll(".dashboard-concept-name").map((el) => el.textContent);
+
+        search.value = "plan";
+        search.dispatch("input", { target: search });
+        expect(names()).toEqual(["Plan Q3"]);
+
+        search.value = "grafo-okf";
+        search.dispatch("input", { target: search });
+        expect(names()).toEqual(["Grafo OKF"]);
+
+        search.value = "CIBER";
+        search.dispatch("input", { target: search });
+        expect(names()).toEqual(["Cibernética y revisiones", "Loop cibernético"]);
+    });
+
+    it("el filtro por tipo deja solo los conceptos del tipo elegido", async () => {
+        const vault = makeVault({ "dashboard.json": snapshotJson({ conceptos: CONCEPTOS_FIXTURE }) });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+        openConceptosTab(root);
+
+        const select = root.querySelector(".dashboard-concept-type-filter")!;
+        select.value = "Decision";
+        select.dispatch("change", { target: select });
+
+        expect(root.querySelectorAll(".dashboard-concept-row")).toHaveLength(1);
+        expect(root.querySelector(".dashboard-concept-name")!.textContent).toBe("Loop cibernético");
+    });
+
+    it("'Solo atención' incluye pending/vencido/stale y excluye FRESCO sin cyber", async () => {
+        const vault = makeVault({ "dashboard.json": snapshotJson({ conceptos: CONCEPTOS_FIXTURE }) });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+        openConceptosTab(root);
+
+        const select = root.querySelector(".dashboard-concept-state-filter")!;
+        const names = () => root.querySelectorAll(".dashboard-concept-name").map((el) => el.textContent);
+
+        select.value = "atencion";
+        select.dispatch("change", { target: select });
+        expect(names()).toEqual(["Loop cibernético", "Plan Q3", "Grafo OKF"]);
+
+        select.value = "cyber";
+        select.dispatch("change", { target: select });
+        expect(names()).toEqual(["Loop cibernético", "Plan Q3"]);
+
+        select.value = "stale";
+        select.dispatch("change", { target: select });
+        expect(names()).toEqual(["Grafo OKF"]);
+    });
+
+    it("click en una fila llama a openLinkText con el path correcto", async () => {
+        const openLinkText = vi.fn();
+        const vault = makeVault({ "dashboard.json": snapshotJson({ conceptos: CONCEPTOS_FIXTURE }) });
+        const { root, view } = makeView(vault, vi.fn(), { workspace: { openLinkText } });
+        await view.onOpen();
+        openConceptosTab(root);
+
+        root.querySelectorAll(".dashboard-concept-row")[1].click();
+        expect(openLinkText).toHaveBeenCalledWith("decisions/loop-cibernetico", "", false);
+    });
+
+    it("sin sección conceptos (snapshot viejo) muestra el mensaje y el resto del panel funciona", async () => {
+        const vault = makeVault({ "dashboard.json": snapshotJson() });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+        openConceptosTab(root);
+
+        const empty = root.querySelector(".dashboard-empty");
+        expect(empty).not.toBeNull();
+        expect(empty!.children.map((c) => c.textContent)).toContain("python3 -m cli dashboard-snapshot");
+
+        // La pestaña Resumen sigue funcionando igual
+        root.querySelectorAll(".dashboard-tab-chip")[0].click();
+        expect(root.querySelectorAll(".dashboard-card")).toHaveLength(4);
+    });
+
+    it("con conceptos vacío también muestra el mensaje de snapshot viejo", async () => {
+        const vault = makeVault({ "dashboard.json": snapshotJson({ conceptos: [] }) });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+        openConceptosTab(root);
+
+        const empty = root.querySelector(".dashboard-empty");
+        expect(empty).not.toBeNull();
+        expect(empty!.children.map((c) => c.textContent)).toContain("python3 -m cli dashboard-snapshot");
+    });
+
+    it("la pestaña activa persiste en la instancia (incluso tras ↻) y el default es Resumen", async () => {
+        const vault = makeVault({ "dashboard.json": snapshotJson({ conceptos: CONCEPTOS_FIXTURE }) });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+
+        // Default: Resumen activa, sin filas de conceptos
+        expect(root.querySelector(".dashboard-tab-chip.dashboard-tab-active")!.textContent).toBe("Resumen");
+        expect(root.querySelector(".dashboard-concept-row")).toBeNull();
+
+        openConceptosTab(root);
+        expect(root.querySelector(".dashboard-tab-chip.dashboard-tab-active")!.textContent).toBe("Conceptos");
+
+        // El ↻ recarga datos pero mantiene la pestaña
+        root.querySelector(".dashboard-refresh-btn")!.click();
+        expect(root.querySelector(".dashboard-tab-chip.dashboard-tab-active")!.textContent).toBe("Conceptos");
+        expect(root.querySelectorAll(".dashboard-concept-row")).toHaveLength(4);
+    });
+
+    it("pagina de a 50 filas y los controles avanzan/retroceden", async () => {
+        const muchos = Array.from({ length: 120 }, (_, i) => ({
+            file: `notas/concepto-${String(i + 1).padStart(3, "0")}`,
+            type: "Insight",
+            title: `Concepto ${String(i + 1).padStart(3, "0")}`,
+            status: "",
+            timestamp: "2026-09-01T10:00:00-05:00",
+            stale: { level: "FRESCO", signal_count: 0, signals: [] },
+            cyber: null,
+        }));
+        const vault = makeVault({ "dashboard.json": snapshotJson({ conceptos: muchos }) });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+        openConceptosTab(root);
+
+        const pagerBtns = () => root.querySelectorAll(".dashboard-pager-btn");
+        const firstRow = () => root.querySelector(".dashboard-concept-name")!.textContent;
+
+        expect(root.querySelectorAll(".dashboard-concept-row")).toHaveLength(50);
+        expect(root.querySelector(".dashboard-pager-label")!.textContent).toBe("1–50 de 120");
+        expect(firstRow()).toBe("Concepto 001");
+
+        pagerBtns()[1].click(); // ›
+        expect(root.querySelectorAll(".dashboard-concept-row")).toHaveLength(50);
+        expect(root.querySelector(".dashboard-pager-label")!.textContent).toBe("51–100 de 120");
+        expect(firstRow()).toBe("Concepto 051");
+
+        pagerBtns()[1].click(); // › (última página)
+        expect(root.querySelectorAll(".dashboard-concept-row")).toHaveLength(20);
+        expect(root.querySelector(".dashboard-pager-label")!.textContent).toBe("101–120 de 120");
+        expect(firstRow()).toBe("Concepto 101");
+        expect(pagerBtns()[1].classList.contains("dashboard-pager-disabled")).toBe(true);
+
+        pagerBtns()[0].click(); // ‹
+        expect(root.querySelector(".dashboard-pager-label")!.textContent).toBe("51–100 de 120");
+        expect(firstRow()).toBe("Concepto 051");
     });
 });
 

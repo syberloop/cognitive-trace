@@ -613,3 +613,208 @@
     font-size: 9px;
     color: var(--text-faint);
 }
+
+/* ── Pestañas del dashboard (Fase 4: Conceptos) ── */
+
+.dashboard-tabs {
+    display: flex;
+    gap: 5px;
+    padding: 8px 12px 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.dashboard-tab-chip {
+    padding: 4px 12px;
+    font-size: 10px;
+    font-family: var(--font-monospace);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 14px;
+    background: var(--background-primary);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.dashboard-tab-chip:hover {
+    border-color: var(--text-muted);
+    color: var(--text-normal);
+}
+.dashboard-tab-chip.dashboard-tab-active {
+    border-color: var(--text-accent);
+    color: var(--text-accent);
+    background: color-mix(in srgb, var(--text-accent) 12%, var(--background-primary));
+    font-weight: 600;
+}
+
+/* Toolbar de la tabla */
+
+.dashboard-concept-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.dashboard-concept-search {
+    flex: 1;
+    min-width: 140px;
+    padding: 4px 10px;
+    font-size: 10px;
+    font-family: var(--font-monospace);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 14px;
+    color: var(--text-normal);
+}
+.dashboard-concept-search:focus {
+    border-color: var(--text-accent);
+    outline: none;
+}
+.dashboard-concept-search::placeholder {
+    color: var(--text-faint);
+}
+
+.dashboard-concept-type-filter,
+.dashboard-concept-state-filter {
+    padding: 4px 8px;
+    font-size: 10px;
+    font-family: var(--font-monospace);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 14px;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.dashboard-concept-type-filter:hover,
+.dashboard-concept-state-filter:hover {
+    border-color: var(--text-muted);
+}
+
+/* Tabla */
+
+.dashboard-concept-content {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.dashboard-concept-table-wrap {
+    overflow-y: auto;
+}
+
+.dashboard-concept-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+.dashboard-concept-head th {
+    text-align: left;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-faint);
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    white-space: nowrap;
+}
+
+.dashboard-concept-row {
+    cursor: pointer;
+}
+.dashboard-concept-row:hover {
+    background: var(--background-modifier-hover);
+}
+
+.dashboard-concept-row td {
+    padding: 4px 12px;
+    border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 50%, transparent);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 0;
+    vertical-align: middle;
+}
+
+.dashboard-concept-name {
+    color: var(--text-accent);
+    font-weight: 600;
+}
+.dashboard-concept-row:hover .dashboard-concept-name {
+    color: var(--text-accent-hover);
+}
+
+.dashboard-concept-status {
+    color: var(--text-muted);
+    font-size: 10px;
+    font-family: var(--font-monospace);
+}
+
+/* Badges Cyber / Stale */
+
+.dashboard-cyber-badge,
+.dashboard-stale-badge {
+    display: inline-block;
+    min-width: 16px;
+    text-align: center;
+    border-radius: 8px;
+    padding: 0 6px;
+    background: var(--background-modifier-hover);
+    font-size: 10px;
+    font-family: var(--font-monospace);
+    font-weight: 600;
+}
+
+.dashboard-cyber-success { color: var(--color-green); }
+.dashboard-cyber-pending { color: var(--color-yellow); }
+.dashboard-cyber-failure { color: var(--color-red); }
+.dashboard-cyber-expired { color: var(--color-red); }
+.dashboard-cyber-none { color: var(--text-faint); }
+
+.dashboard-stale-fresco { color: var(--color-green); }
+.dashboard-stale-atencion { color: var(--color-yellow); }
+.dashboard-stale-stale { color: var(--color-red); }
+.dashboard-stale-none { color: var(--text-faint); }
+
+/* Paginación */
+
+.dashboard-pager {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.dashboard-pager-btn {
+    padding: 2px 10px;
+    font-size: 12px;
+    font-family: var(--font-monospace);
+    background: transparent;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    line-height: 1;
+    transition: border-color 0.12s, color 0.12s;
+}
+.dashboard-pager-btn:hover:not(.dashboard-pager-disabled) {
+    border-color: var(--text-accent);
+    color: var(--text-accent);
+}
+.dashboard-pager-btn.dashboard-pager-disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.dashboard-pager-label {
+    font-size: 10px;
+    font-family: var(--font-monospace);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    min-width: 90px;
+    text-align: center;
+    user-select: none;
+}
