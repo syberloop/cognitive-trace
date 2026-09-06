@@ -1,5 +1,5 @@
 // main.ts — Entry point del plugin Cognitive Trace
-import { Plugin, Notice } from "obsidian";
+import { Plugin, Notice, WorkspaceLeaf } from "obsidian";
 import { EventReader, TraceEvent } from "./event_reader";
 import { GraphAnimator } from "./graph_animator";
 import { TimelineView, TIMELINE_VIEW_TYPE } from "./timeline_view";
@@ -187,9 +187,12 @@ export default class CognitiveTracePlugin extends Plugin {
         // Panel de configuración
         this.addSettingTab(new CTSettingTab(this.app, this));
 
-        // Ribbon icon
+        // Ribbon icons
         this.addRibbonIcon("activity", "Cognitive Trace", () => {
             this.activateTimeline();
+        });
+        this.addRibbonIcon("gauge", "Dashboard OKF", () => {
+            this.activateDashboard();
         });
 
         console.log("[CognitiveTrace] Plugin loaded successfully");
@@ -223,7 +226,11 @@ export default class CognitiveTracePlugin extends Plugin {
                 leaf = rightLeaf;
             }
         }
-        if (leaf) workspace.revealLeaf(leaf);
+        // Los types locales de obsidian.d.ts son viejos (1 arg); la API real
+        // acepta { expand } — cast tipado para expandir el sidebar si está cerrado.
+        const reveal = workspace.revealLeaf as (
+            leaf: WorkspaceLeaf, opts?: { expand?: boolean }) => Promise<void>;
+        if (leaf) void reveal(leaf, { expand: true });
     }
 
     async activateDashboard(): Promise<void> {
@@ -236,6 +243,8 @@ export default class CognitiveTracePlugin extends Plugin {
                 leaf = rightLeaf;
             }
         }
-        if (leaf) workspace.revealLeaf(leaf);
+        const reveal = workspace.revealLeaf as (
+            leaf: WorkspaceLeaf, opts?: { expand?: boolean }) => Promise<void>;
+        if (leaf) void reveal(leaf, { expand: true });
     }
 }
