@@ -675,7 +675,8 @@
 }
 
 .dashboard-concept-type-filter,
-.dashboard-concept-state-filter {
+.dashboard-concept-state-filter,
+.dashboard-concept-date-filter {
     padding: 4px 8px;
     font-size: 10px;
     font-family: var(--font-monospace);
@@ -686,7 +687,8 @@
     cursor: pointer;
 }
 .dashboard-concept-type-filter:hover,
-.dashboard-concept-state-filter:hover {
+.dashboard-concept-state-filter:hover,
+.dashboard-concept-date-filter:hover {
     border-color: var(--text-muted);
 }
 
@@ -720,6 +722,34 @@
     white-space: nowrap;
 }
 
+/* Headers ordenables: botón transparente que hereda el estilo del th */
+.dashboard-concept-head th.dashboard-concept-sortable {
+    padding: 0;
+}
+
+.dashboard-concept-sort-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 12px;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-family: var(--font-monospace);
+    color: var(--text-faint);
+    background: none;
+    border: none;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.dashboard-concept-sort-btn:hover {
+    color: var(--text-muted);
+}
+.dashboard-concept-sort-btn.dashboard-sort-active {
+    color: var(--text-accent);
+}
+
 .dashboard-concept-row {
     cursor: pointer;
 }
@@ -749,6 +779,13 @@
     color: var(--text-muted);
     font-size: 10px;
     font-family: var(--font-monospace);
+}
+
+.dashboard-concept-updated {
+    color: var(--text-faint);
+    font-size: 10px;
+    font-family: var(--font-monospace);
+    font-variant-numeric: tabular-nums;
 }
 
 /* Badges Cyber / Stale */

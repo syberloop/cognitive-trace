@@ -151,6 +151,28 @@ const STATE_FILTER_DEFS: Array<{ value: ConceptStateFilter; label: string }> = [
     { value: "stale", label: "Solo stale" },
 ];
 
+type ConceptDateFilter = "todos" | "hoy" | "7d" | "30d";
+
+const DATE_FILTER_DEFS: Array<{ value: ConceptDateFilter; label: string }> = [
+    { value: "todos", label: "Cualquier fecha" },
+    { value: "hoy", label: "Hoy" },
+    { value: "7d", label: "Últimos 7 días" },
+    { value: "30d", label: "Últimos 30 días" },
+];
+
+type ConceptSortKey = "name" | "type" | "status" | "updated";
+interface ConceptSortState { key: ConceptSortKey; dir: "asc" | "desc"; }
+
+/** Columnas de la tabla: las que tienen key son ordenables (header clickeable). */
+const CONCEPT_HEADER_DEFS: Array<{ key: ConceptSortKey | null; label: string }> = [
+    { key: "name", label: "Concepto" },
+    { key: "type", label: "Tipo" },
+    { key: "status", label: "Status" },
+    { key: "updated", label: "Actualizado" },
+    { key: null, label: "Cyber" },
+    { key: null, label: "Stale" },
+];
+
 const CONCEPT_PAGE_SIZE = 50;
 
 const LAYER_LEGENDS: Record<DashboardLayer, Array<[string, string]>> = {
@@ -293,6 +315,8 @@ export class DashboardView extends ItemView {
     private conceptSearch = "";
     private conceptTypeFilter = "todos";
     private conceptStateFilter: ConceptStateFilter = "todos";
+    private conceptDateFilter: ConceptDateFilter = "todos";
+    private conceptSort: ConceptSortState | null = null;
     private conceptPage = 0;
     // Series diarias para sparklines: una por tarjeta, punto por snapshot
     private series: {
@@ -518,6 +542,14 @@ export class DashboardView extends ItemView {
         }
         stateSelect.value = this.conceptStateFilter;
 
+        const dateSelect = toolbar.createEl("select", { cls: "dashboard-concept-date-filter" }) as HTMLSelectElement;
+        dateSelect.setAttribute("aria-label", "Filtrar por fecha");
+        for (const def of DATE_FILTER_DEFS) {
+            const opt = dateSelect.createEl("option", { text: def.label });
+            opt.setAttribute("value", def.value);
+        }
+        dateSelect.value = this.conceptDateFilter;
+
         const content = container.createEl("div", { cls: "dashboard-concept-content" });
         this.renderConceptosContent(content);
 
@@ -536,6 +568,11 @@ export class DashboardView extends ItemView {
             this.conceptPage = 0;
             this.renderConceptosContent(content);
         });
+        dateSelect.addEventListener("change", (ev) => {
+            this.conceptDateFilter = (ev.target as HTMLSelectElement).value as ConceptDateFilter;
+            this.conceptPage = 0;
+            this.renderConceptosContent(content);
+        });
     }
 
     /** Tabla paginada (o mensaje de snapshot viejo). Reconstruye el contenido
@@ -551,8 +588,10 @@ export class DashboardView extends ItemView {
             return;
         }
 
+        // Filtros → orden (si hay uno activo) → paginación
         const filtered = this.filterConceptos(conceptos);
-        const total = filtered.length;
+        const sorted = this.sortConceptos(filtered);
+        const total = sorted.length;
         const totalPages = Math.max(1, Math.ceil(total / CONCEPT_PAGE_SIZE));
         const page = Math.min(this.conceptPage, totalPages - 1);
 
@@ -563,14 +602,29 @@ export class DashboardView extends ItemView {
         }
 
         const start = page * CONCEPT_PAGE_SIZE;
-        const slice = filtered.slice(start, start + CONCEPT_PAGE_SIZE);
+        const slice = sorted.slice(start, start + CONCEPT_PAGE_SIZE);
 
         const wrap = container.createEl("div", { cls: "dashboard-concept-table-wrap" });
         const table = wrap.createEl("table", { cls: "dashboard-concept-table" });
         const thead = table.createEl("thead");
         const headRow = thead.createEl("tr", { cls: "dashboard-concept-head" });
-        for (const label of ["Concepto", "Tipo", "Status", "Cyber", "Stale"]) {
-            headRow.createEl("th", { text: label });
+        for (const col of CONCEPT_HEADER_DEFS) {
+            const th = headRow.createEl("th");
+            if (!col.key) { th.setText(col.label); continue; }
+            th.addClass("dashboard-concept-sortable");
+            const sort = this.conceptSort;
+            const active = sort?.key === col.key;
+            const btn = th.createEl("button", {
+                cls: "dashboard-concept-sort-btn" + (active ? " dashboard-sort-active" : ""),
+            });
+            const arrow = active ? (sort!.dir === "asc" ? "▲" : "▼") : "↕";
+            btn.setText(`${col.label} ${arrow}`);
+            btn.setAttribute("aria-label", `Ordenar por ${col.label}`);
+            btn.addEventListener("click", () => {
+                this.cycleSort(col.key!);
+                this.conceptPage = 0;
+                this.renderConceptosContent(container);
+            });
         }
         const tbody = table.createEl("tbody");
         for (const entry of slice) {
@@ -620,6 +674,10 @@ export class DashboardView extends ItemView {
         const status = row.createEl("td", { cls: "dashboard-concept-status" });
         status.setText(entry.status || "—");
 
+        // Actualizado: fecha local del último cambio (timestamp del frontmatter OKF)
+        const updated = row.createEl("td", { cls: "dashboard-concept-updated" });
+        updated.setText(this.formatTimestamp(entry.timestamp));
+
         // Cyber: ícono + color por estado, tooltip con detalle
         const cyber = this.cyberBadge(entry.cyber);
         const cyberTd = row.createEl("td", { cls: "dashboard-concept-cyber" });
@@ -656,8 +714,89 @@ export class DashboardView extends ItemView {
                 case "stale": if (e.stale?.level !== "STALE") return false; break;
                 case "atencion": if (!this.requiresAttention(e)) return false; break;
             }
+            if (this.conceptDateFilter !== "todos" && !this.matchesDateRange(e.timestamp)) return false;
             return true;
         });
+    }
+
+    /** Orden estable sobre la lista ya filtrada. Sin orden activo devuelve la
+     *  lista tal cual (orden base del snapshot). */
+    private sortConceptos(list: ConceptoEntry[]): ConceptoEntry[] {
+        const sort = this.conceptSort;
+        if (!sort) return list;
+        const dir = sort.dir === "asc" ? 1 : -1;
+        return [...list].sort((a, b) => this.compareConceptos(a, b, sort.key, dir));
+    }
+
+    private compareConceptos(a: ConceptoEntry, b: ConceptoEntry, key: ConceptSortKey, dir: 1 | -1): number {
+        switch (key) {
+            case "name": return dir * (a.title || a.file || "").localeCompare(b.title || b.file || "");
+            case "type": return dir * (a.type || "").localeCompare(b.type || "");
+            case "status": return dir * (a.status || "").localeCompare(b.status || "");
+            case "updated": {
+                // Sin fecha al final en ambas direcciones
+                const ta = this.timestampMs(a.timestamp);
+                const tb = this.timestampMs(b.timestamp);
+                if (ta == null && tb == null) return 0;
+                if (ta == null) return 1;
+                if (tb == null) return -1;
+                return dir * (ta - tb);
+            }
+        }
+    }
+
+    /** Ciclo del header: lo activa (fechas desc = lo más nuevo arriba, texto
+     *  asc = alfabético), el segundo click invierte y el tercero vuelve al
+     *  orden base del snapshot. */
+    private cycleSort(key: ConceptSortKey): void {
+        const firstDir: "asc" | "desc" = key === "updated" ? "desc" : "asc";
+        if (!this.conceptSort || this.conceptSort.key !== key) {
+            this.conceptSort = { key, dir: firstDir };
+        } else if (this.conceptSort.dir === firstDir) {
+            this.conceptSort = { key, dir: firstDir === "asc" ? "desc" : "asc" };
+        } else {
+            this.conceptSort = null;
+        }
+    }
+
+    /** YYYY-MM-DD en hora local; "—" si falta o no parsea. */
+    private formatTimestamp(iso: string | undefined): string {
+        const t = this.timestampMs(iso);
+        if (t == null) return "—";
+        const d = new Date(t);
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        return `${d.getFullYear()}-${mm}-${dd}`;
+    }
+
+    private timestampMs(iso: string | undefined): number | null {
+        if (!iso) return null;
+        const t = Date.parse(iso);
+        return isNaN(t) ? null : t;
+    }
+
+    /** timestamp >= medianoche local del inicio del rango; sin fecha nunca matchea. */
+    private matchesDateRange(iso: string | undefined): boolean {
+        const t = this.timestampMs(iso);
+        if (t == null) return false;
+        return t >= this.dateRangeStart();
+    }
+
+    private dateRangeStart(): number {
+        switch (this.conceptDateFilter) {
+            case "hoy": return this.startOfLocalDay(0);
+            case "7d": return this.startOfLocalDay(6);
+            case "30d": return this.startOfLocalDay(29);
+            default: return 0; // "todos" — no se consulta
+        }
+    }
+
+    /** Medianoche local de hace `daysAgo` días (0 = hoy). */
+    private startOfLocalDay(daysAgo: number): number {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() - daysAgo);
+        return d.getTime();
     }
 
     private conceptTypes(): string[] {

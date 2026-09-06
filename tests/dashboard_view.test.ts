@@ -339,6 +339,67 @@ const CONCEPTOS_FIXTURE = [
     },
 ];
 
+// ── Fixture con fechas relativas (columna Actualizado / filtro temporal) ──
+// Mediodía local para que el formateo YYYY-MM-DD no se desplace con la zona
+// horaria del runner ni con cambios de DST.
+
+/** Timestamp ISO de la fecha local de hace `daysAgo` días, al mediodía. */
+function localIso(daysAgo: number): string {
+    const d = new Date();
+    d.setHours(12, 0, 0, 0);
+    d.setDate(d.getDate() - daysAgo);
+    return d.toISOString();
+}
+
+/** YYYY-MM-DD local de hace `daysAgo` días (esperado en la celda Actualizado). */
+function localDate(daysAgo: number): string {
+    const d = new Date();
+    d.setHours(12, 0, 0, 0);
+    d.setDate(d.getDate() - daysAgo);
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+/** Orden del snapshot: Beta (10d), Alfa (hoy), Zeta (60d), Sin fecha (null). */
+const FECHA_FIXTURE = [
+    {
+        file: "notas/beta",
+        type: "Insight",
+        title: "Beta",
+        status: "activo",
+        timestamp: localIso(10),
+        stale: { level: "FRESCO", signal_count: 0, signals: [] },
+        cyber: null,
+    },
+    {
+        file: "notas/alfa",
+        type: "Decision",
+        title: "Alfa",
+        status: "aplicada",
+        timestamp: localIso(0),
+        stale: { level: "ATENCION", signal_count: 1, signals: ["no backlinks"] },
+        cyber: { outcome: "pending", review_on: "2026-09-10", vencido: false, target_metric: null },
+    },
+    {
+        file: "notas/zeta",
+        type: "Plan",
+        title: "Zeta",
+        status: "propuesta",
+        timestamp: localIso(60),
+        stale: { level: "STALE", signal_count: 2, signals: ["60d sin visita"] },
+        cyber: null,
+    },
+    {
+        file: "notas/sin-fecha",
+        type: "Research",
+        title: "Sin fecha",
+        status: "",
+        stale: { level: "FRESCO", signal_count: 0, signals: [] },
+        cyber: null,
+    },
+];
+
 describe("DashboardView — pestaña Conceptos", () => {
     afterEach(() => {
         vi.unstubAllGlobals();
@@ -356,34 +417,36 @@ describe("DashboardView — pestaña Conceptos", () => {
         const rows = root.querySelectorAll(".dashboard-concept-row");
         expect(rows).toHaveLength(4);
 
-        // Fila 1: FRESCO sin cyber — columnas en orden Concepto/Tipo/Status/Cyber/Stale
-        const [name, type, status, cyber, stale] = rows[0].children;
+        // Fila 1: FRESCO sin cyber — columnas en orden Concepto/Tipo/Status/Actualizado/Cyber/Stale
+        const [name, type, status, updated, cyber, stale] = rows[0].children;
         expect(name.textContent).toBe("Cibernética y revisiones");
         expect(type.textContent).toBe("Insight");
         expect(status.textContent).toBe("activo");
+        expect(updated.textContent).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(updated.classList.contains("dashboard-concept-updated")).toBe(true);
         expect(cyber.children[0].textContent).toBe("—");
         expect(stale.children[0].textContent).toBe("FRESCO");
         expect(stale.children[0].classList.contains("dashboard-stale-fresco")).toBe(true);
 
         // Fila 2: ATENCION + cyber pending, tooltip con review y métrica
         const row2 = rows[1].children;
-        expect(row2[3].children[0].textContent).toBe("⏳");
-        expect(row2[3].children[0].classList.contains("dashboard-cyber-pending")).toBe(true);
-        expect(row2[3].title).toContain("review 2026-09-10");
-        expect(row2[3].title).toContain("loop_closure");
-        expect(row2[4].children[0].classList.contains("dashboard-stale-atencion")).toBe(true);
+        expect(row2[4].children[0].textContent).toBe("⏳");
+        expect(row2[4].children[0].classList.contains("dashboard-cyber-pending")).toBe(true);
+        expect(row2[4].title).toContain("review 2026-09-10");
+        expect(row2[4].title).toContain("loop_closure");
+        expect(row2[5].children[0].classList.contains("dashboard-stale-atencion")).toBe(true);
 
         // Fila 3: vencido tiene prioridad sobre outcome success
         const row3 = rows[2].children;
-        expect(row3[3].children[0].textContent).toBe("!");
-        expect(row3[3].children[0].classList.contains("dashboard-cyber-expired")).toBe(true);
+        expect(row3[4].children[0].textContent).toBe("!");
+        expect(row3[4].children[0].classList.contains("dashboard-cyber-expired")).toBe(true);
 
         // Fila 4: STALE con señal principal como tooltip, status vacío → "—"
         const row4 = rows[3].children;
         expect(row4[2].textContent).toBe("—");
-        expect(row4[4].children[0].textContent).toBe("STALE");
-        expect(row4[4].children[0].classList.contains("dashboard-stale-stale")).toBe(true);
-        expect(row4[4].title).toBe("30d sin visita");
+        expect(row4[5].children[0].textContent).toBe("STALE");
+        expect(row4[5].children[0].classList.contains("dashboard-stale-stale")).toBe(true);
+        expect(row4[5].title).toBe("30d sin visita");
     });
 
     it("el buscador filtra por título y por file (case-insensitive)", async () => {
@@ -535,6 +598,131 @@ describe("DashboardView — pestaña Conceptos", () => {
         pagerBtns()[0].click(); // ‹
         expect(root.querySelector(".dashboard-pager-label")!.textContent).toBe("51–100 de 120");
         expect(firstRow()).toBe("Concepto 051");
+    });
+});
+
+describe("DashboardView — Conceptos: columna Actualizado, orden y filtro de fecha", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        for (const dir of tempDirs.splice(0)) {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    /** Vista abierta en la pestaña Conceptos con el fixture de fechas. */
+    async function open(): Promise<{ root: FakeElement }> {
+        const vault = makeVault({ "dashboard.json": snapshotJson({ conceptos: FECHA_FIXTURE }) });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+        openConceptosTab(root);
+        return { root };
+    }
+
+    const names = (root: FakeElement): string[] =>
+        root.querySelectorAll(".dashboard-concept-name").map((el) => el.textContent);
+    const sortBtns = (root: FakeElement): FakeElement[] =>
+        root.querySelectorAll(".dashboard-concept-sort-btn");
+
+    it("la columna Actualizado renderiza YYYY-MM-DD y — para el sin timestamp", async () => {
+        const { root } = await open();
+
+        // 6 columnas: Concepto, Tipo, Status, Actualizado, Cyber, Stale
+        const head = root.querySelector(".dashboard-concept-head")!.children;
+        expect(head).toHaveLength(6);
+        expect(head.map((th) => (th.children[0] ? th.children[0].textContent : th.textContent)))
+            .toEqual(["Concepto ↕", "Tipo ↕", "Status ↕", "Actualizado ↕", "Cyber", "Stale"]);
+
+        const updated = root.querySelectorAll(".dashboard-concept-row")
+            .map((row) => row.children[3].textContent);
+        expect(updated).toEqual([localDate(10), localDate(0), localDate(60), "—"]);
+    });
+
+    it("click en Actualizado ordena desc (lo más nuevo primero) y otro click asc (sin fecha al final)", async () => {
+        const { root } = await open();
+
+        // Primer click: desc
+        sortBtns(root)[3].click();
+        expect(names(root)).toEqual(["Alfa", "Beta", "Zeta", "Sin fecha"]);
+        let btn = sortBtns(root)[3];
+        expect(btn.textContent).toContain("▼");
+        expect(btn.classList.contains("dashboard-sort-active")).toBe(true);
+
+        // Segundo click: asc — el más viejo primero y el sin fecha sigue al final
+        sortBtns(root)[3].click();
+        expect(names(root)).toEqual(["Zeta", "Beta", "Alfa", "Sin fecha"]);
+        btn = sortBtns(root)[3];
+        expect(btn.textContent).toContain("▲");
+    });
+
+    it("click en Concepto ordena alfabético y otro click lo invierte", async () => {
+        const { root } = await open();
+
+        sortBtns(root)[0].click(); // asc alfabético
+        expect(names(root)).toEqual(["Alfa", "Beta", "Sin fecha", "Zeta"]);
+
+        sortBtns(root)[0].click(); // desc
+        expect(names(root)).toEqual(["Zeta", "Sin fecha", "Beta", "Alfa"]);
+    });
+
+    it("el tercer click en el header activo vuelve al orden del snapshot", async () => {
+        const { root } = await open();
+
+        sortBtns(root)[0].click(); // asc
+        sortBtns(root)[0].click(); // desc
+        sortBtns(root)[0].click(); // → sin orden
+
+        expect(names(root)).toEqual(["Beta", "Alfa", "Zeta", "Sin fecha"]);
+        expect(sortBtns(root)[0].textContent).toContain("↕");
+        expect(sortBtns(root)[0].classList.contains("dashboard-sort-active")).toBe(false);
+    });
+
+    it("el filtro de fecha incluye solo los timestamp dentro del rango", async () => {
+        const { root } = await open();
+        const dateSelect = root.querySelector(".dashboard-concept-date-filter")!;
+
+        dateSelect.value = "hoy";
+        dateSelect.dispatch("change", { target: dateSelect });
+        expect(names(root)).toEqual(["Alfa"]);
+
+        dateSelect.value = "7d";
+        dateSelect.dispatch("change", { target: dateSelect });
+        expect(names(root)).toEqual(["Alfa"]); // excluye 10d, 60d y sin fecha
+
+        dateSelect.value = "30d";
+        dateSelect.dispatch("change", { target: dateSelect });
+        expect(names(root)).toEqual(["Beta", "Alfa"]); // excluye 60d y sin fecha
+
+        dateSelect.value = "todos";
+        dateSelect.dispatch("change", { target: dateSelect });
+        expect(names(root)).toEqual(["Beta", "Alfa", "Zeta", "Sin fecha"]);
+    });
+
+    it("búsqueda/tipo/estado siguen funcionando con el orden aplicado y persiste al filtrar", async () => {
+        const { root } = await open();
+
+        // Orden alfabético activo
+        sortBtns(root)[0].click();
+        expect(names(root)).toEqual(["Alfa", "Beta", "Sin fecha", "Zeta"]);
+
+        const search = root.querySelector(".dashboard-concept-search")!;
+        search.value = "zeta";
+        search.dispatch("input", { target: search });
+        expect(names(root)).toEqual(["Zeta"]);
+        search.value = "";
+        search.dispatch("input", { target: search });
+        expect(names(root)).toEqual(["Alfa", "Beta", "Sin fecha", "Zeta"]); // el orden persiste
+
+        const typeSelect = root.querySelector(".dashboard-concept-type-filter")!;
+        typeSelect.value = "Plan";
+        typeSelect.dispatch("change", { target: typeSelect });
+        expect(names(root)).toEqual(["Zeta"]);
+        typeSelect.value = "todos";
+        typeSelect.dispatch("change", { target: typeSelect });
+
+        const stateSelect = root.querySelector(".dashboard-concept-state-filter")!;
+        stateSelect.value = "atencion";
+        stateSelect.dispatch("change", { target: stateSelect });
+        expect(names(root)).toEqual(["Alfa", "Zeta"]); // alfabético sobre el resultado filtrado
     });
 });
 
