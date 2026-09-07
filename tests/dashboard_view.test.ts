@@ -250,6 +250,34 @@ describe("DashboardView", () => {
         expect(nodes).toContainEqual({ slug: "Notes/c", color: "#9E9E9E" });
     });
 
+    it("muestra en la leyenda qué sesiones compara Session Diff (metadata del CLI)", async () => {
+        const vault = makeVault({
+            "dashboard.json": snapshotJson({
+                session_diff: {
+                    session_a: { id: "20260906_075241_29f8de42", nodos: 12 },
+                    session_b: { id: "20260905_213034_b69ec3", nodos: 8 },
+                    solo_a: ["Notes/a"],
+                    solo_b: ["Notes/b"],
+                    ambas: ["Notes/c"],
+                },
+            }),
+        });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+
+        const chip = root.querySelectorAll(".dashboard-layer-chip")[4];
+        chip.click();
+
+        const cmp = root.querySelector(".dashboard-sessiondiff-cmp");
+        expect(cmp).not.toBeNull();
+        // En el fake DOM el texto vive en el primer hijo (span con text)
+        const text = cmp!.children.map((c) => c.textContent).join("");
+        expect(text).toContain("20260906_075241_29f8de42");
+        expect(text).toContain("12");
+        expect(text).toContain("20260905_213034_b69ec3");
+        expect(text).toContain("8");
+    });
+
     it("dibuja sparklines desde los últimos snapshots diarios (canvas sin contexto en tests)", async () => {
         const vault = makeVault({
             "dashboard.json": snapshotJson(),

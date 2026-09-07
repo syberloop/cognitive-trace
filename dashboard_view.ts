@@ -125,8 +125,16 @@ export interface DashboardSnapshot {
     };
     conceptos?: ConceptoEntry[]; // Fase 4: detalle por nodo (tabla de Conceptos)
     negocio?: unknown; // null en Fase 2 — placeholder
-    // Diff de sesiones (opcional — requiere 2 session_ids)
-    session_diff?: { solo_a?: string[]; solo_b?: string[]; ambas?: string[] };
+    // Diff de sesiones (opcional — requiere 2 session_ids). El CLI lo genera:
+    // default = 2 sesiones de agente más recientes, o flags --session-a/-b.
+    // session_a/session_b son metadata para mostrar qué se comparó.
+    session_diff?: {
+        session_a?: { id?: string; nodos?: number };
+        session_b?: { id?: string; nodos?: number };
+        solo_a?: string[];
+        solo_b?: string[];
+        ambas?: string[];
+    };
 }
 
 const LAYER_DEFS: Array<{ key: DashboardLayer; label: string }> = [
@@ -524,12 +532,27 @@ export class DashboardView extends ItemView {
         const entries = LAYER_LEGENDS[layer];
         if (!entries || entries.length === 0) return;
         const legend = container.createEl("div", { cls: "dashboard-legend" });
+        // Session Diff: mostrar qué sesiones se comparan (metadata del CLI)
+        if (layer === "session_diff" && this.data?.session_diff) {
+            const sd = this.data.session_diff;
+            const a = sd.session_a?.id ? this.shortenSessionId(sd.session_a.id) : "?";
+            const b = sd.session_b?.id ? this.shortenSessionId(sd.session_b.id) : "?";
+            const aN = sd.session_a?.nodos ?? 0;
+            const bN = sd.session_b?.nodos ?? 0;
+            const cmp = legend.createEl("span", { cls: "dashboard-legend-item dashboard-sessiondiff-cmp" });
+            cmp.createEl("span", { text: `A: ${a} (${aN}) · B: ${b} (${bN})` });
+        }
         for (const [label, color] of entries) {
             const item = legend.createEl("span", { cls: "dashboard-legend-item" });
             const dot = item.createEl("span", { cls: "dashboard-legend-dot" });
             dot.style.backgroundColor = color;
             item.createEl("span", { text: label });
         }
+    }
+
+    /** Trunca un session_id largo para la leyenda (mantiene el inicio). */
+    private shortenSessionId(id: string): string {
+        return id.length > 28 ? `${id.slice(0, 28)}…` : id;
     }
 
     /** Barra apilada de salud del vault (F3): segmentos FRESCO/ATENCION/STALE

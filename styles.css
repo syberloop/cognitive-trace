@@ -508,6 +508,14 @@
     gap: 4px;
 }
 
+/* Comparación de sesiones en la leyenda Session Diff: resalta qué sesiones
+   se están comparando (A vs B con conteo de nodos navegados). */
+.dashboard-legend-item.dashboard-sessiondiff-cmp {
+    color: var(--text-normal);
+    font-weight: 600;
+    margin-right: 4px;
+}
+
 .dashboard-legend-dot {
     width: 6px; height: 6px;
     border-radius: 50%;
