@@ -514,6 +514,40 @@
     flex-shrink: 0;
 }
 
+/* Barra apilada de salud del vault (FRESCO/ATENCION/STALE) */
+
+.dashboard-healthbar {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 16px 0;
+}
+
+.dashboard-healthbar-track {
+    display: flex;
+    gap: 1px;
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--background-modifier-border);
+}
+
+.dashboard-healthbar-seg {
+    min-width: 0;
+    transition: flex-grow 0.3s;
+}
+
+.dashboard-healthbar-fresco { background: var(--color-green, #2ECC40); }
+.dashboard-healthbar-atencion { background: var(--color-yellow, #FFDC00); }
+.dashboard-healthbar-stale { background: var(--color-red, #FF4136); }
+
+.dashboard-healthbar-label {
+    font-size: 9px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
 /* Tarjetas KPI */
 
 .dashboard-grid {
@@ -532,6 +566,27 @@
     padding: 16px;
     border: 1px solid var(--background-modifier-border);
     min-width: 0;
+}
+
+/* Tarjetas navegables: click → pestaña Conceptos con filtro coherente */
+.dashboard-card-clickable {
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+.dashboard-card-clickable:hover {
+    border-color: var(--text-accent);
+    background: var(--background-modifier-hover);
+}
+
+.dashboard-card-chevron {
+    margin-left: 4px;
+    font-size: 12px;
+    line-height: 1;
+    color: var(--text-faint);
+    transition: color 0.15s;
+}
+.dashboard-card-clickable:hover .dashboard-card-chevron {
+    color: var(--text-accent);
 }
 
 .dashboard-card-head {
@@ -565,6 +620,11 @@
     margin-top: 6px;
     font-variant-numeric: tabular-nums;
 }
+
+/* Color del KPI por umbral de salud (misma paleta que las flechas de tendencia) */
+.dashboard-card .kpi-value.kpi-value-ok { color: var(--color-green, #2ECC40); }
+.dashboard-card .kpi-value.kpi-value-warn { color: var(--color-yellow, #FFDC00); }
+.dashboard-card .kpi-value.kpi-value-bad { color: var(--color-red, #FF4136); }
 
 .dashboard-card .kpi-sparkline {
     width: 100%;
@@ -690,6 +750,51 @@
 .dashboard-concept-state-filter:hover,
 .dashboard-concept-date-filter:hover {
     border-color: var(--text-muted);
+}
+
+/* Chips de conteos por estado (sobre la tabla) */
+
+.dashboard-concept-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 8px 12px 0;
+}
+
+.dashboard-concept-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    font-size: 10px;
+    font-family: var(--font-monospace);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 14px;
+    background: var(--background-primary);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.dashboard-concept-chip:hover {
+    border-color: var(--text-muted);
+    color: var(--text-normal);
+}
+.dashboard-concept-chip.dashboard-chip-active {
+    border-color: var(--text-accent);
+    color: var(--text-accent);
+    background: color-mix(in srgb, var(--text-accent) 12%, var(--background-primary));
+    font-weight: 600;
+}
+
+.dashboard-chip-count {
+    font-size: 9px;
+    color: var(--text-faint);
+    background: var(--background-modifier-hover);
+    border-radius: 8px;
+    padding: 0 5px;
+    min-width: 14px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
 }
 
 /* Tabla */

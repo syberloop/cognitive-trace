@@ -726,6 +726,208 @@ describe("DashboardView — Conceptos: columna Actualizado, orden y filtro de fe
     });
 });
 
+describe("DashboardView — UX del Resumen (F1–F4: navegación KPI, chips, barra, umbrales)", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        for (const dir of tempDirs.splice(0)) {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    /** Vista abierta con el fixture de conceptos (+ overrides de snapshot). */
+    async function openWith(overrides: Record<string, unknown> = {}) {
+        const vault = makeVault({ "dashboard.json": snapshotJson({ conceptos: CONCEPTOS_FIXTURE, ...overrides }) });
+        const { root, view, onLayerApply } = makeView(vault);
+        await view.onOpen();
+        return { root, view, vault };
+    }
+
+    const stateSelect = (root: FakeElement) => root.querySelector(".dashboard-concept-state-filter")!;
+    const names = (root: FakeElement): string[] =>
+        root.querySelectorAll(".dashboard-concept-name").map((el) => el.textContent);
+
+    // ── F1: tarjetas KPI navegables ──
+
+    it("F1: click en la tarjeta Salud abre Conceptos con el filtro 'atencion'", async () => {
+        const { root } = await openWith();
+        const cards = root.querySelectorAll(".dashboard-card");
+
+        // Afordance: las navegables tienen clase + aria-label, Negocio no
+        expect(cards[0].classList.contains("dashboard-card-clickable")).toBe(true);
+        expect(cards[0].attributes.get("aria-label")).toBe("Ver en Conceptos");
+        expect(cards[0].querySelector(".dashboard-card-chevron")).not.toBeNull();
+        expect(cards[3].classList.contains("dashboard-card-clickable")).toBe(false);
+        expect(cards[3].querySelector(".dashboard-card-chevron")).toBeNull();
+
+        cards[0].click();
+        expect(root.querySelector(".dashboard-tab-chip.dashboard-tab-active")!.textContent).toBe("Conceptos");
+        expect(stateSelect(root).value).toBe("atencion");
+        expect(names(root)).toEqual(["Loop cibernético", "Plan Q3", "Grafo OKF"]);
+    });
+
+    it("F1: Cibernética → 'cyber', Actividad → 'todos' (limpia el filtro previo)", async () => {
+        const { root } = await openWith();
+
+        root.querySelectorAll(".dashboard-card")[1].click();
+        expect(stateSelect(root).value).toBe("cyber");
+        expect(names(root)).toEqual(["Loop cibernético", "Plan Q3"]);
+
+        // Vuelta al Resumen y click en Actividad: muestra todo
+        root.querySelectorAll(".dashboard-tab-chip")[0].click();
+        root.querySelectorAll(".dashboard-card")[2].click();
+        expect(stateSelect(root).value).toBe("todos");
+        expect(names(root)).toEqual(["Cibernética y revisiones", "Loop cibernético", "Plan Q3", "Grafo OKF"]);
+    });
+
+    it("F1: Negocio es placeholder — click no navega", async () => {
+        const { root } = await openWith();
+        root.querySelectorAll(".dashboard-card")[3].click();
+        expect(root.querySelector(".dashboard-tab-chip.dashboard-tab-active")!.textContent).toBe("Resumen");
+        expect(root.querySelector(".dashboard-concept-row")).toBeNull();
+    });
+
+    // ── F2: chips de conteos ──
+
+    it("F2: chips con los conteos del fixture; click filtra, click en activo vuelve a todos", async () => {
+        const { root } = await openWith();
+        openConceptosTab(root);
+
+        const chips = root.querySelectorAll(".dashboard-concept-chip");
+        expect(chips).toHaveLength(4);
+        expect(chips.map((c) => c.textContent)).toEqual(["FRESCO", "ATENCION", "STALE", "Con cyber"]);
+        expect(chips.map((c) => c.children[0].textContent)).toEqual(["2", "1", "1", "2"]);
+        expect(chips[0].classList.contains("dashboard-chip-active")).toBe(false);
+
+        // Click en ATENCION: filtra y sincroniza el select
+        chips[1].click();
+        expect(stateSelect(root).value).toBe("atencion");
+        expect(names(root)).toEqual(["Loop cibernético", "Plan Q3", "Grafo OKF"]);
+        const chipsAfter = root.querySelectorAll(".dashboard-concept-chip");
+        expect(chipsAfter[1].classList.contains("dashboard-chip-active")).toBe(true);
+
+        // Click en el chip ya activo → vuelve a "todos"
+        chipsAfter[1].click();
+        expect(stateSelect(root).value).toBe("todos");
+        expect(names(root)).toEqual(["Cibernética y revisiones", "Loop cibernético", "Plan Q3", "Grafo OKF"]);
+        expect(
+            root.querySelectorAll(".dashboard-concept-chip")
+                .some((c) => c.classList.contains("dashboard-chip-active")),
+        ).toBe(false);
+    });
+
+    it("F2: el select de estado sincroniza el chip activo; 'fresco' filtra por nivel", async () => {
+        const { root } = await openWith();
+        openConceptosTab(root);
+
+        const select = stateSelect(root);
+        select.value = "stale";
+        select.dispatch("change", { target: select });
+        expect(names(root)).toEqual(["Grafo OKF"]);
+        expect(root.querySelectorAll(".dashboard-concept-chip")[2].classList.contains("dashboard-chip-active")).toBe(true);
+
+        // El nuevo valor "fresco" existe en el select y filtra stale.level FRESCO
+        select.value = "fresco";
+        select.dispatch("change", { target: select });
+        expect(names(root)).toEqual(["Cibernética y revisiones", "Plan Q3"]);
+        expect(root.querySelectorAll(".dashboard-concept-chip")[0].classList.contains("dashboard-chip-active")).toBe(true);
+    });
+
+    // ── F3: barra apilada de salud ──
+
+    it("F3: barra con segmentos proporcionales al fixture y label de total", async () => {
+        const { root } = await openWith();
+
+        const segs = root.querySelectorAll(".dashboard-healthbar-seg");
+        expect(segs).toHaveLength(3);
+        expect(segs.map((s) => s.style.flex)).toEqual(["2", "1", "1"]);
+        expect(segs[0].classList.contains("dashboard-healthbar-fresco")).toBe(true);
+        expect(segs[1].classList.contains("dashboard-healthbar-atencion")).toBe(true);
+        expect(segs[2].classList.contains("dashboard-healthbar-stale")).toBe(true);
+        expect(segs[0].title).toBe("FRESCO 2 (50%)");
+        expect(segs[1].title).toBe("ATENCION 1 (25%)");
+        expect(segs[2].title).toBe("STALE 1 (25%)");
+        expect(root.querySelector(".dashboard-healthbar-label")!.textContent).toBe("4 conceptos");
+    });
+
+    it("F3: sin conceptos[] (snapshot viejo) no hay barra y el Resumen no se rompe", async () => {
+        const vault = makeVault({ "dashboard.json": snapshotJson() });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+
+        expect(root.querySelector(".dashboard-healthbar")).toBeNull();
+        expect(root.querySelectorAll(".dashboard-card")).toHaveLength(4);
+
+        // conceptos: [] tampoco muestra barra
+        fs.writeFileSync(path.join(vault, "dashboard.json"), snapshotJson({ conceptos: [] }));
+        root.querySelector(".dashboard-refresh-btn")!.click();
+        expect(root.querySelector(".dashboard-healthbar")).toBeNull();
+        expect(root.querySelectorAll(".dashboard-card")).toHaveLength(4);
+    });
+
+    // ── F4: KPI coloreado por umbral ──
+
+    it("F4: fixture → Salud ok, Cibernética bad, Actividad ok, Negocio sin clase", async () => {
+        const { root } = await openWith();
+        const kpis = root.querySelectorAll(".kpi-value");
+        expect(kpis[0].classList.contains("kpi-value-ok")).toBe(true);
+        expect(kpis[1].classList.contains("kpi-value-bad")).toBe(true);
+        expect(kpis[2].classList.contains("kpi-value-ok")).toBe(true);
+        for (const cls of ["kpi-value-ok", "kpi-value-warn", "kpi-value-bad"]) {
+            expect(kpis[3].classList.contains(cls)).toBe(false);
+        }
+    });
+
+    it("F4: umbrales de Salud — ≥80% ok, ≥55% warn, <55% bad", async () => {
+        const vault = makeVault({ "dashboard.json": snapshotJson({ health: { score: 7, max_score: 9 } }) });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+
+        const saludKpi = () => root.querySelectorAll(".kpi-value")[0];
+        expect(saludKpi().textContent).toBe("7/9");
+        expect(saludKpi().classList.contains("kpi-value-warn")).toBe(true);
+
+        fs.writeFileSync(path.join(vault, "dashboard.json"), snapshotJson({ health: { score: 4, max_score: 9 } }));
+        root.querySelector(".dashboard-refresh-btn")!.click();
+        expect(saludKpi().classList.contains("kpi-value-bad")).toBe(true);
+
+        fs.writeFileSync(path.join(vault, "dashboard.json"), snapshotJson({ health: { score: 8, max_score: 10 } }));
+        root.querySelector(".dashboard-refresh-btn")!.click();
+        expect(saludKpi().classList.contains("kpi-value-ok")).toBe(true);
+    });
+
+    it("F4: umbrales de Cibernética — vencidos bad, loops abiertos warn, cerrado ok", async () => {
+        const cyber = (loops: number, vencidos: number) => ({
+            total_blocks: 53, loops_cerrados: 8, loops_abiertos: loops,
+            review_on_vencidos: vencidos, review_on_proximos_7d: 0,
+            outcome_pending: 0, outcome_success: 0, outcome_failure: 0, trend_7d: "flat",
+        });
+        const vault = makeVault({ "dashboard.json": snapshotJson({ cibernetica: cyber(4, 0) }) });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+
+        const cyberKpi = () => root.querySelectorAll(".kpi-value")[1];
+        expect(cyberKpi().classList.contains("kpi-value-warn")).toBe(true);
+
+        fs.writeFileSync(path.join(vault, "dashboard.json"), snapshotJson({ cibernetica: cyber(4, 1) }));
+        root.querySelector(".dashboard-refresh-btn")!.click();
+        expect(cyberKpi().classList.contains("kpi-value-bad")).toBe(true);
+
+        fs.writeFileSync(path.join(vault, "dashboard.json"), snapshotJson({ cibernetica: cyber(0, 0) }));
+        root.querySelector(".dashboard-refresh-btn")!.click();
+        expect(cyberKpi().classList.contains("kpi-value-ok")).toBe(true);
+    });
+
+    it("F4: actividad con 0 eventos 7d → warn (vault inactivo)", async () => {
+        const vault = makeVault({ "dashboard.json": snapshotJson({ actividad: { eventos_7d: 0 } }) });
+        const { root, view } = makeView(vault);
+        await view.onOpen();
+
+        const actividadKpi = root.querySelectorAll(".kpi-value")[2];
+        expect(actividadKpi.textContent).toBe("0");
+        expect(actividadKpi.classList.contains("kpi-value-warn")).toBe(true);
+    });
+});
+
 describe("buildLayerNodes", () => {
     it("devuelve lista vacía para capas sin snapshot", () => {
         expect(buildLayerNodes("heat", null)).toEqual([]);

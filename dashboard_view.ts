@@ -142,13 +142,29 @@ const TAB_DEFS: Array<{ key: DashboardTab; label: string }> = [
     { key: "conceptos", label: "Conceptos" },
 ];
 
-type ConceptStateFilter = "todos" | "atencion" | "cyber" | "stale";
+type ConceptStateFilter = "todos" | "atencion" | "cyber" | "stale" | "fresco";
 
 const STATE_FILTER_DEFS: Array<{ value: ConceptStateFilter; label: string }> = [
     { value: "todos", label: "Todos" },
     { value: "atencion", label: "Solo atención" },
     { value: "cyber", label: "Con cyber" },
     { value: "stale", label: "Solo stale" },
+    { value: "fresco", label: "Solo fresco" },
+];
+
+/** Chips de resumen sobre la tabla de Conceptos: conteos por nivel de stale y
+ *  por bloque cyber, calculados sobre conceptos[] completo (no sobre lo
+ *  filtrado) — los mismos conteos que usa la barra apilada del Resumen. */
+const CONCEPT_CHIP_DEFS: Array<{
+    value: ConceptStateFilter;
+    label: string;
+    count: (e: ConceptoEntry) => boolean;
+    cls: string;
+}> = [
+    { value: "fresco", label: "FRESCO", count: (e) => e.stale?.level === "FRESCO", cls: "dashboard-chip-fresco" },
+    { value: "atencion", label: "ATENCION", count: (e) => e.stale?.level === "ATENCION", cls: "dashboard-chip-atencion" },
+    { value: "stale", label: "STALE", count: (e) => e.stale?.level === "STALE", cls: "dashboard-chip-stale" },
+    { value: "cyber", label: "Con cyber", count: (e) => e.cyber != null, cls: "dashboard-chip-cyber" },
 ];
 
 type ConceptDateFilter = "todos" | "hoy" | "7d" | "30d";
@@ -299,6 +315,11 @@ interface CardOpts {
     spark: Array<number | null> | null;
     sparkColor: string;
     details: Array<{ label: string; value: string }>;
+    /** Umbral de salud del KPI: colorea el valor (F4). Ausente = color neutro. */
+    valueClass?: "ok" | "warn" | "bad";
+    /** Preset de filtro de estado al clickear la tarjeta (F1). Ausente = la
+     *  tarjeta no navega (placeholder Negocio). */
+    preset?: ConceptStateFilter;
 }
 
 export class DashboardView extends ItemView {
@@ -318,6 +339,11 @@ export class DashboardView extends ItemView {
     private conceptDateFilter: ConceptDateFilter = "todos";
     private conceptSort: ConceptSortState | null = null;
     private conceptPage = 0;
+    // Preset de filtro pendiente (F1): lo setea el click en una tarjeta KPI y
+    // se consume al renderizar la pestaña Conceptos (queda en conceptStateFilter).
+    private conceptPreset: ConceptStateFilter | null = null;
+    // Referencia al select de estado del toolbar para sincronizarlo con los chips.
+    private conceptStateSelect: HTMLSelectElement | null = null;
     // Series diarias para sparklines: una por tarjeta, punto por snapshot
     private series: {
         health: Array<number | null>;
@@ -486,6 +512,7 @@ export class DashboardView extends ItemView {
             }
             return;
         }
+        this.renderHealthBar(container);
         const grid = container.createEl("div", { cls: "dashboard-grid" });
         this.renderSaludCard(grid);
         this.renderCiberneticaCard(grid);
@@ -505,12 +532,58 @@ export class DashboardView extends ItemView {
         }
     }
 
+    /** Barra apilada de salud del vault (F3): segmentos FRESCO/ATENCION/STALE
+     *  con ancho proporcional a los conteos de conceptos[]. Los porcentajes de
+     *  cada segmento son sobre la suma de los tres niveles (coherentes con el
+     *  ancho de la barra). Sin conceptos o sin niveles de stale no se muestra. */
+    private renderHealthBar(container: HTMLElement): void {
+        const conceptos = this.data?.conceptos ?? [];
+        if (conceptos.length === 0) return;
+        const levels = [
+            { level: "FRESCO", cls: "dashboard-healthbar-fresco" },
+            { level: "ATENCION", cls: "dashboard-healthbar-atencion" },
+            { level: "STALE", cls: "dashboard-healthbar-stale" },
+        ] as const;
+        const counts: Record<string, number> = { FRESCO: 0, ATENCION: 0, STALE: 0 };
+        for (const e of conceptos) {
+            const lv = e.stale?.level;
+            if (lv === "FRESCO" || lv === "ATENCION" || lv === "STALE") counts[lv]++;
+        }
+        const sum = counts.FRESCO + counts.ATENCION + counts.STALE;
+        if (sum === 0) return;
+
+        const bar = container.createEl("div", { cls: "dashboard-healthbar" });
+        const track = bar.createEl("div", { cls: "dashboard-healthbar-track" });
+        for (const { level, cls } of levels) {
+            const seg = track.createEl("div", { cls: `dashboard-healthbar-seg ${cls}` });
+            seg.style.flex = String(counts[level]);
+            seg.title = `${level} ${counts[level]} (${Math.round((counts[level] / sum) * 100)}%)`;
+        }
+        bar.createEl("div", { cls: "dashboard-healthbar-label", text: `${conceptos.length} conceptos` });
+    }
+
+    /** F1: click en una tarjeta KPI → pestaña Conceptos con el filtro de estado
+     *  coherente con la tarjeta. El preset se consume al renderizar la pestaña:
+     *  queda como filtro normal de estado y el usuario puede cambiarlo. */
+    private navigateToConceptos(preset: ConceptStateFilter): void {
+        this.conceptPreset = preset;
+        this.conceptPage = 0;
+        this.activeTab = "conceptos";
+        this.render();
+    }
+
     // ── Pestaña Conceptos (Fase 4) ──
 
     /** Toolbar (buscador + filtros) fijo + contenido paginado. El toolbar no se
      *  re-renderiza al filtrar: solo se reconstruye el contenido, para no perder
      *  el foco del input de búsqueda mientras se escribe. */
     private renderConceptosTab(container: HTMLElement): void {
+        // Consume el preset de una tarjeta KPI (F1): se aplica una sola vez y
+        // persiste como filtro normal de estado (el flujo manual no cambia).
+        if (this.conceptPreset != null) {
+            this.conceptStateFilter = this.conceptPreset;
+            this.conceptPreset = null;
+        }
         const toolbar = container.createEl("div", { cls: "dashboard-concept-toolbar" });
 
         const search = toolbar.createEl("input", { cls: "dashboard-concept-search" }) as HTMLInputElement;
@@ -541,6 +614,7 @@ export class DashboardView extends ItemView {
             opt.setAttribute("value", def.value);
         }
         stateSelect.value = this.conceptStateFilter;
+        this.conceptStateSelect = stateSelect;
 
         const dateSelect = toolbar.createEl("select", { cls: "dashboard-concept-date-filter" }) as HTMLSelectElement;
         dateSelect.setAttribute("aria-label", "Filtrar por fecha");
@@ -575,6 +649,29 @@ export class DashboardView extends ItemView {
         });
     }
 
+    /** Chips de conteos por estado (F2). Click = atajo al filtro de estado,
+     *  sincronizado con el select: el chip activo se marca y el select refleja
+     *  el valor. Click en el chip ya activo vuelve a "todos". */
+    private renderConceptChips(container: HTMLElement, conceptos: ConceptoEntry[]): void {
+        const chips = container.createEl("div", { cls: "dashboard-concept-chips" });
+        for (const def of CONCEPT_CHIP_DEFS) {
+            const count = conceptos.filter(def.count).length;
+            const active = this.conceptStateFilter === def.value;
+            const chip = chips.createEl("button", {
+                cls: "dashboard-concept-chip " + def.cls + (active ? " dashboard-chip-active" : ""),
+            });
+            chip.setText(def.label);
+            chip.createEl("span", { cls: "dashboard-chip-count", text: String(count) });
+            chip.setAttribute("aria-label", `${def.label} (${count})`);
+            chip.addEventListener("click", () => {
+                this.conceptStateFilter = active ? "todos" : def.value;
+                this.conceptPage = 0;
+                if (this.conceptStateSelect) this.conceptStateSelect.value = this.conceptStateFilter;
+                this.renderConceptosContent(container);
+            });
+        }
+    }
+
     /** Tabla paginada (o mensaje de snapshot viejo). Reconstruye el contenido
      *  desde el estado actual de filtros/búsqueda/página. */
     private renderConceptosContent(container: HTMLElement): void {
@@ -587,6 +684,11 @@ export class DashboardView extends ItemView {
             empty.createEl("div", { cls: "dashboard-empty-detail", text: "python3 -m cli dashboard-snapshot" });
             return;
         }
+
+        // Chips de conteos por estado (F2): van dentro del contenido para que
+        // el chip activo se re-renderice en cada cambio de filtro y quede
+        // sincronizado con el select del toolbar.
+        this.renderConceptChips(container, conceptos);
 
         // Filtros → orden (si hay uno activo) → paginación
         const filtered = this.filterConceptos(conceptos);
@@ -712,6 +814,7 @@ export class DashboardView extends ItemView {
             switch (this.conceptStateFilter) {
                 case "cyber": if (!e.cyber) return false; break;
                 case "stale": if (e.stale?.level !== "STALE") return false; break;
+                case "fresco": if (e.stale?.level !== "FRESCO") return false; break;
                 case "atencion": if (!this.requiresAttention(e)) return false; break;
             }
             if (this.conceptDateFilter !== "todos" && !this.matchesDateRange(e.timestamp)) return false;
@@ -847,6 +950,11 @@ export class DashboardView extends ItemView {
 
     private renderCard(grid: HTMLElement, opts: CardOpts): void {
         const card = grid.createEl("div", { cls: "dashboard-card" });
+        if (opts.preset != null) {
+            card.addClass("dashboard-card-clickable");
+            card.setAttribute("aria-label", "Ver en Conceptos");
+            card.addEventListener("click", () => this.navigateToConceptos(opts.preset!));
+        }
 
         const head = card.createEl("div", { cls: "dashboard-card-head" });
         head.createEl("span", { cls: "dashboard-card-icon", text: opts.icon });
@@ -854,8 +962,15 @@ export class DashboardView extends ItemView {
         const trend = this.trendArrow(opts.trend);
         const trendEl = head.createEl("span", { cls: `kpi-trend ${trend.cls}`, text: trend.glyph });
         trendEl.title = trend.glyph === "—" ? "tendencia 7d sin datos" : `tendencia 7d: ${opts.trend}`;
+        // Affordance sutil de navegación (solo tarjetas navegables)
+        if (opts.preset != null) {
+            head.createEl("span", { cls: "dashboard-card-chevron", text: "›" });
+        }
 
-        card.createEl("div", { cls: "kpi-value", text: opts.kpi });
+        card.createEl("div", {
+            cls: "kpi-value" + (opts.valueClass ? ` kpi-value-${opts.valueClass}` : ""),
+            text: opts.kpi,
+        });
 
         if (opts.spark && opts.spark.length > 0) {
             const canvas = card.createEl("canvas", { cls: "kpi-sparkline" }) as HTMLCanvasElement;
@@ -881,6 +996,8 @@ export class DashboardView extends ItemView {
             trend: h?.trend_7d,
             spark: this.series.health,
             sparkColor: this.cssColor("--color-green", "#2ECC40"),
+            valueClass: this.saludClass(),
+            preset: "atencion",
             details: [
                 { label: "errores", value: this.fmt(h?.errors) },
                 { label: "advertencias", value: this.fmt(h?.warnings) },
@@ -897,6 +1014,8 @@ export class DashboardView extends ItemView {
             trend: c?.trend_7d,
             spark: this.series.cyber,
             sparkColor: this.cssColor("--color-cyan", "#00B8D9"),
+            valueClass: this.cyberClass(),
+            preset: "cyber",
             details: [
                 { label: "review_on vencidos", value: this.fmt(c?.review_on_vencidos) },
                 { label: "próximos 7d", value: this.fmt(c?.review_on_proximos_7d) },
@@ -919,6 +1038,8 @@ export class DashboardView extends ItemView {
             trend: a?.trend_7d,
             spark: this.series.actividad,
             sparkColor: this.cssColor("--color-yellow", "#FFDC00"),
+            valueClass: this.actividadClass(),
+            preset: "todos",
             details: [
                 { label: "sesiones 7d", value: this.fmt(a?.sesiones_7d) },
                 { label: "eventos 24h", value: this.fmt(a?.eventos_24h) },
@@ -939,6 +1060,37 @@ export class DashboardView extends ItemView {
                 { label: "estado", value: "Umami API · D1 — plan pendiente" },
             ],
         });
+    }
+
+    /** F4: umbral de Salud — score/max_score ≥ 80% ok, ≥ 55% warn, < 55% bad.
+     *  Sin score o max_score no colorea (el valor muestra "—"). */
+    private saludClass(): "ok" | "warn" | "bad" | undefined {
+        const h = this.data?.health;
+        if (h?.score == null || h?.max_score == null || h.max_score <= 0) return undefined;
+        const ratio = h.score / h.max_score;
+        if (ratio >= 0.8) return "ok";
+        if (ratio >= 0.55) return "warn";
+        return "bad";
+    }
+
+    /** F4: umbral de Cibernética — reviews vencidos es lo más grave (bad);
+     *  loops abiertos sin vencer son trabajo en curso (warn); todo cerrado y
+     *  sin vencidos es ok. Sin datos no colorea. */
+    private cyberClass(): "ok" | "warn" | "bad" | undefined {
+        const c = this.data?.cibernetica;
+        if (!c || c.review_on_vencidos == null || c.loops_abiertos == null) return undefined;
+        if (c.review_on_vencidos > 0) return "bad";
+        if (c.loops_abiertos > 0) return "warn";
+        return "ok";
+    }
+
+    /** F4: umbral de Actividad — 0 eventos en 7d es warn (vault inactivo);
+     *  cualquier actividad es ok. No hay estado bad: la inactividad es un
+     *  síntoma, no un daño. Sin dato no colorea. */
+    private actividadClass(): "ok" | "warn" | "bad" | undefined {
+        const a = this.data?.actividad;
+        if (a?.eventos_7d == null) return undefined;
+        return a.eventos_7d > 0 ? "ok" : "warn";
     }
 
     private trendArrow(trend: string | null | undefined): { glyph: string; cls: string } {
