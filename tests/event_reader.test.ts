@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, appendFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
@@ -122,5 +122,45 @@ describe("eventNodeSlug / eventNodePipe", () => {
         expect(eventNodePipe({ ...base, tool: "read" })).toBe("read");
         expect(eventNodePipe({ ...base, tool: "okf_traverse" })).toBe("traverse");
         expect(eventNodePipe({ ...base, tool: "traverse" })).toBe("traverse");
+    });
+});
+
+// El JSONL crece con cada evento (hasta que mcp-okf lo rota) y el plugin solo
+// necesita los últimos MAX_BUFFER_EVENTS al abrir: readAll lee desde el final.
+describe("EventReader.readAll lee solo el final del archivo", () => {
+    const eventos = (n: number) => Array.from({ length: n }, (_, i) => makeEvent(`t${i}`)).join("\n") + "\n";
+
+    it("devuelve los últimos N en orden aunque la ventana inicial sea chica", () => {
+        const { reader } = makeReader(eventos(50));
+        expect(reader.readAll(5, 64).map((e) => e.tool)).toEqual(["t45", "t46", "t47", "t48", "t49"]);
+    });
+
+    it("para pocos eventos no lee el archivo entero", () => {
+        const { reader, path } = makeReader(eventos(2000));
+        reader.readAll(3, 1024);
+        expect((reader as any).readAllBytes).toBeLessThan(statSync(path).size / 10);
+    });
+
+    it("descarta la primera línea cortada sin reportarla como malformada", () => {
+        const { reader } = makeReader(eventos(50));
+        const errors: string[] = [];
+        reader.onError((message) => errors.push(message));
+        reader.readAll(5, 100);
+        expect(errors).toEqual([]);
+    });
+
+    it("el tail sigue desde donde terminó la carga inicial", () => {
+        const { reader, path } = makeReader(eventos(10));
+        reader.readAll(3, 64);
+        const received: unknown[] = [];
+        reader.onEvents((events) => received.push(...events.map((e) => e.tool)));
+        appendFileSync(path, makeEvent("nuevo") + "\n");
+        (reader as any).poll();
+        expect(received).toEqual(["nuevo"]);
+    });
+
+    it("sin límite de eventos sigue leyendo todo", () => {
+        const { reader } = makeReader(eventos(50));
+        expect(reader.readAll()).toHaveLength(50);
     });
 });

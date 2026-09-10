@@ -7,6 +7,8 @@ main.js
 
 # Datos de runtime del trace (eventos del agente, no es código)
 event_log.jsonl
+# Respaldo que deja la rotación del JSONL en mcp-okf (event_log.jsonl.1)
+event_log.jsonl.*
 *.db
 *.db-journal
 
