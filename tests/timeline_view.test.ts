@@ -124,6 +124,18 @@ describe("TimelineView", () => {
         expect(root.querySelectorAll(".trace-event")).toHaveLength(1);
     });
 
+    it("muestra los eventos del CLI, que traen el nodo en params.target", async () => {
+        const events = [
+            makeEvent("okf_traverse", "2026-09-10T15:00:00.000Z", { params: { target: "decisions/implantacion-okf", depth: 1 } }),
+            makeEvent("okf_read", "2026-09-10T15:00:01.000Z", { params: { target: "frameworks/tp3-cibernetico" } }),
+        ];
+        const { root, view } = makeView(events);
+
+        await view.onOpen();
+
+        expect(root.querySelectorAll(".trace-event")).toHaveLength(2);
+    });
+
     it("expone progreso y controles de pausa y detención del replay", async () => {
         const onActivate = vi.fn();
         const onStop = vi.fn();

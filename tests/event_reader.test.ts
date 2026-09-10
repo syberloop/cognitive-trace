@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, appendFileSync } from "n
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { EventReader } from "../event_reader";
+import { EventReader, eventNodePipe, eventNodeSlug } from "../event_reader";
 
 const tempDirs: string[] = [];
 
@@ -78,5 +78,49 @@ describe("EventReader", () => {
         appendFileSync(path, "{partial");
         (reader as any).poll();
         expect(errors).toHaveLength(1);
+    });
+});
+
+describe("eventNodeSlug / eventNodePipe", () => {
+    const base = { type: "tool" as const, session: "s", ts: "2026-09-10T15:00:00.000Z" };
+
+    it("lee el nodo del server (params.slug)", () => {
+        expect(eventNodeSlug({ ...base, tool: "okf_traverse", params: { slug: "frameworks/x" } }))
+            .toBe("frameworks/x");
+    });
+
+    it("lee el nodo del CLI (params.target)", () => {
+        expect(eventNodeSlug({ ...base, tool: "okf_traverse", params: { target: "decisions/implantacion-okf", depth: 1 } }))
+            .toBe("decisions/implantacion-okf");
+        expect(eventNodeSlug({ ...base, tool: "okf_read", params: { target: "decisions/implantacion-okf" } }))
+            .toBe("decisions/implantacion-okf");
+    });
+
+    it("acepta el tool name legacy del harness dsh (traverse/read sin prefijo)", () => {
+        expect(eventNodeSlug({ ...base, tool: "traverse", params: { target: "Notes/a" } })).toBe("Notes/a");
+        expect(eventNodeSlug({ ...base, tool: "read", params: { target: "Notes/a" } })).toBe("Notes/a");
+    });
+
+    it("prefiere slug sobre target cuando vienen los dos", () => {
+        expect(eventNodeSlug({ ...base, tool: "okf_traverse", params: { slug: "a/b", target: "c/d" } })).toBe("a/b");
+    });
+
+    it("ignora tools donde target no es un nodo (validate: ruta de archivo)", () => {
+        expect(eventNodeSlug({ ...base, tool: "okf_validate", params: { target: "decisions/x.md" } })).toBeUndefined();
+        expect(eventNodeSlug({ ...base, tool: "okf_touch", params: { target: "decisions/x" } })).toBeUndefined();
+    });
+
+    it("ignora comandos, eventos sin nodo y nodos vacíos", () => {
+        expect(eventNodeSlug({ ...base, type: "command", tool: "okf_read", params: { target: "a/b" } })).toBeUndefined();
+        expect(eventNodeSlug({ ...base, tool: "okf_traverse", params: { depth: 1 } })).toBeUndefined();
+        expect(eventNodeSlug({ ...base, tool: "okf_traverse", params: { target: "" } })).toBeUndefined();
+        expect(eventNodeSlug({ ...base, tool: "okf_traverse" })).toBeUndefined();
+    });
+
+    it("el pipe distingue read de traverse con los dos nombres de tool", () => {
+        expect(eventNodePipe({ ...base, tool: "okf_read" })).toBe("read");
+        expect(eventNodePipe({ ...base, tool: "read" })).toBe("read");
+        expect(eventNodePipe({ ...base, tool: "okf_traverse" })).toBe("traverse");
+        expect(eventNodePipe({ ...base, tool: "traverse" })).toBe("traverse");
     });
 });

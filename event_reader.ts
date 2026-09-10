@@ -22,6 +22,26 @@ export interface TraceEvent {
 export type EventCallback = (events: TraceEvent[]) => void;
 export type ReaderErrorCallback = (message: string) => void;
 
+/** Tools que registran la visita a un nodo.
+ *  El server MCP guarda el nodo en `params.slug`; el CLI (`traverse`/`read` con
+ *  argumento posicional) y el harness dsh lo guardan en `params.target`. Misma
+ *  normalización que `v_node_events` del server (mcp-okf#13). */
+const NODE_VISIT_TOOLS = new Set(["okf_traverse", "traverse", "okf_read", "read"]);
+
+/** Slug del nodo visitado por un evento traverse/read, o undefined si el evento
+ *  no visita ningún nodo. Acepta las dos formas de `params` (slug y target). */
+export function eventNodeSlug(event: TraceEvent): string | undefined {
+    if (!event || event.type === "command" || !event.tool) return undefined;
+    if (!NODE_VISIT_TOOLS.has(event.tool)) return undefined;
+    const node = event.params?.slug ?? event.params?.target;
+    return typeof node === "string" && node.length > 0 ? node : undefined;
+}
+
+/** Pipe del nodo visitado: "read" para las tools de lectura, "traverse" para el resto. */
+export function eventNodePipe(event: TraceEvent): "read" | "traverse" {
+    return event.tool === "okf_read" || event.tool === "read" ? "read" : "traverse";
+}
+
 export class EventReader {
     private filePath: string;
     private lastSize = 0;

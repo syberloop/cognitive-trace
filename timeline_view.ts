@@ -1,7 +1,7 @@
 // timeline_view.ts — Panel lateral con lista cronológica de eventos
 // v3: diseño compacto con contadores por pipe y badge X/Y visible/invisible
 import { ItemView, WorkspaceLeaf } from "obsidian";
-import { TraceEvent } from "./event_reader";
+import { TraceEvent, eventNodeSlug } from "./event_reader";
 import { CTSettings } from "./settings";
 
 export const TIMELINE_VIEW_TYPE = "cognitive-trace-timeline";
@@ -40,8 +40,9 @@ const MAX_VISIBLE = 200;
  *  todo lo que ves en el timeline tiene su reflejo en el grafo. */
 function hasGraphEffect(e: TraceEvent): boolean {
     if (e.type === "command") return true;
-    // read / traverse con slug → colorean el nodo consultado
-    if ((e.tool === "okf_traverse" || e.tool === "okf_read") && e.params?.slug) return true;
+    // read / traverse con nodo → colorean el nodo consultado (el server lo
+    // escribe en params.slug; el CLI y el dsh, en params.target)
+    if (eventNodeSlug(e)) return true;
     // new exitoso → colorea el archivo creado
     if (e.tool === "okf_new" && e.params?.created_path && e.exit_code === 0) return true;
     // Cualquier tool con result_nodes → colorea el subgrafo resultado
@@ -373,6 +374,7 @@ export class TimelineView extends ItemView {
                 }
 
                 const eventBody = row.createEl("div", { cls: "trace-event-body" });
+                const nodeSlug = eventNodeSlug(event);
                 if (event.type === "command") {
                     eventBody.createEl("span", { cls: "trace-event-text", text: `⚡ ${event.action || "?"}` });
                     const extra: string[] = [];
@@ -381,7 +383,7 @@ export class TimelineView extends ItemView {
                     if (extra.length) eventBody.createEl("span", { cls: "trace-event-extra", text: extra.join(" · ") });
                 } else {
                     const icon = TOOL_ICONS[event.tool || ""] || "•";
-                    const slug = event.params?.slug || event.params?.query || "";
+                    const slug = nodeSlug || event.params?.query || "";
                     let text = `${icon} ${event.tool || "?"}`;
                     if (slug) text += ` → ${slug}`;
                     eventBody.createEl("span", { cls: "trace-event-text", text });
@@ -395,7 +397,7 @@ export class TimelineView extends ItemView {
                 const tooltipParts: string[] = [];
                 tooltipParts.push(event.ts.slice(0, 19).replace("T", " "));
                 if (event.tool) tooltipParts.push(event.tool);
-                if (event.params?.slug) tooltipParts.push(`slug: ${event.params.slug}`);
+                if (nodeSlug) tooltipParts.push(`slug: ${nodeSlug}`);
                 if (event.params?.query) tooltipParts.push(`query: ${event.params.query}`);
                 if (event.params?.command) tooltipParts.push(`cmd: ${event.params.command}`);
                 if (event.duration_ms) tooltipParts.push(`${event.duration_ms}ms`);
@@ -413,7 +415,7 @@ export class TimelineView extends ItemView {
                 // Click en evento → highlight en grafo
                 if (this.onHighlightNode) {
                     row.addClass("trace-event-clickable");
-                    const clickSlug = event.params?.slug || event.params?.created_path
+                    const clickSlug = nodeSlug || event.params?.created_path
                         || event.result_nodes?.[0] || event.nodes?.[0];
                     row.addEventListener("click", (ev) => {
                         ev.stopPropagation();
