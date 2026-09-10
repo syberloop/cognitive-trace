@@ -42,6 +42,10 @@ export function eventNodePipe(event: TraceEvent): "read" | "traverse" {
     return event.tool === "okf_read" || event.tool === "read" ? "read" : "traverse";
 }
 
+/** Ventana inicial de readAll: ~600 eventos de ~420 bytes. Si no alcanza para
+ *  maxEvents (eventos con muchas aristas pesan más), se duplica. */
+const READ_ALL_WINDOW = 256 * 1024;
+
 export class EventReader {
     private filePath: string;
     private lastSize = 0;
@@ -50,6 +54,8 @@ export class EventReader {
     private listeners: EventCallback[] = [];
     private errorListeners: ReaderErrorCallback[] = [];
     private pollInterval: ReturnType<typeof setInterval> | null = null;
+    /** Bytes que leyó la última llamada a readAll (diagnóstico y tests). */
+    private readAllBytes = 0;
 
     constructor(vaultPath: string) {
         this.filePath = path.join(
@@ -75,21 +81,43 @@ export class EventReader {
         for (const cb of this.errorListeners) cb(message);
     }
 
-    /** Leer los últimos eventos históricos del JSONL (para carga inicial). */
-    readAll(maxEvents = Infinity): TraceEvent[] {
+    /** Leer los últimos eventos históricos del JSONL (para carga inicial).
+     *  Lee desde el final en ventanas que se duplican hasta juntar maxEvents:
+     *  el costo depende de los eventos pedidos, no del tamaño del archivo. */
+    readAll(maxEvents = Infinity, initialWindow = READ_ALL_WINDOW): TraceEvent[] {
         if (!fs.existsSync(this.filePath)) return [];
-        const content = fs.readFileSync(this.filePath, "utf-8");
-        this.lastSize = fs.statSync(this.filePath).size;
-        const events: TraceEvent[] = [];
-        const lines = content.split("\n");
-        let malformed = 0;
-        for (let i = lines.length - 1; i >= 0 && events.length < maxEvents; i--) {
-            const line = lines[i];
-            if (!line.trim()) continue;
-            try { events.unshift(JSON.parse(line)); } catch { malformed++; }
+        const fd = fs.openSync(this.filePath, "r");
+        try {
+            const size = fs.fstatSync(fd).size;
+            // El tail sigue exactamente desde lo que se leyó acá: sin hueco
+            // entre la carga inicial y el primer poll().
+            this.lastSize = size;
+            let window = Number.isFinite(maxEvents) ? Math.min(Math.max(initialWindow, 1), size) : size;
+            this.readAllBytes = 0;
+            for (;;) {
+                const start = size - window;
+                const buf = Buffer.alloc(window);
+                if (window > 0) fs.readSync(fd, buf, 0, window, start);
+                this.readAllBytes += window;
+                const lines = buf.toString("utf-8").split("\n");
+                // Una ventana que no arranca en el byte 0 corta la primera línea.
+                if (start > 0) lines.shift();
+                const newestFirst: TraceEvent[] = [];
+                let malformed = 0;
+                for (let i = lines.length - 1; i >= 0 && newestFirst.length < maxEvents; i--) {
+                    const line = lines[i];
+                    if (!line.trim()) continue;
+                    try { newestFirst.push(JSON.parse(line)); } catch { malformed++; }
+                }
+                if (newestFirst.length >= maxEvents || start === 0) {
+                    this.reportMalformedLines(malformed);
+                    return newestFirst.reverse();
+                }
+                window = Math.min(window * 2, size);
+            }
+        } finally {
+            fs.closeSync(fd);
         }
-        this.reportMalformedLines(malformed);
-        return events;
     }
 
     start(): void {
