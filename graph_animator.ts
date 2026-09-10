@@ -2,7 +2,7 @@
 // El renderer dibuja cada círculo blanco (radio 100) y lo colorea vía tint desde getFillColor().
 // Un int crudo en node.color produce alpha NaN (u.a === undefined) y el nodo se vuelve invisible.
 import { App, EventRef } from "obsidian";
-import { TraceEvent } from "./event_reader";
+import { TraceEvent, eventNodePipe, eventNodeSlug } from "./event_reader";
 import { CTSettings } from "./settings";
 
 // Compartido con TimelineView para que los filtros controlen también el grafo
@@ -100,16 +100,16 @@ export class GraphAnimator {
                 this.pendingAppearances.add(path);
                 continue;
             }
-            if ((e.tool === "okf_traverse" || e.tool === "okf_read") && e.params?.slug) {
-                const slug = e.params.slug;
-                const pipe: PipeKey = e.tool === "okf_read" ? "read" : "traverse";
-                this.visitedNodes.add(slug);
-                this.nodePipes.set(slug, pipe);
-                if (e.tool === "okf_read") this.readNodes.add(slug);
-                this.currentNode = slug;
+            const visitNode = eventNodeSlug(e);
+            if (visitNode) {
+                const pipe: PipeKey = eventNodePipe(e);
+                this.visitedNodes.add(visitNode);
+                this.nodePipes.set(visitNode, pipe);
+                if (pipe === "read") this.readNodes.add(visitNode);
+                this.currentNode = visitNode;
             }
             if (Array.isArray(e.result_nodes)) {
-                const resPipe: PipeKey = (e.tool === "okf_traverse") ? "traverse" : "search";
+                const resPipe: PipeKey = (e.tool === "okf_traverse" || e.tool === "traverse") ? "traverse" : "search";
                 for (const p of e.result_nodes) {
                     this.visitedNodes.add(p);
                     const existing = this.nodePipes.get(p);
@@ -362,22 +362,22 @@ export class GraphAnimator {
                 this.pendingPulses.add(path);
                 continue;
             }
-            if ((e.tool === "okf_traverse" || e.tool === "okf_read") && e.params?.slug) {
-                const slug = e.params.slug;
-                const pipe: PipeKey = e.tool === "okf_read" ? "read" : "traverse";
+            const visitNode = eventNodeSlug(e);
+            if (visitNode) {
+                const pipe: PipeKey = eventNodePipe(e);
                 // Durante replay: siempre pulso, incluso en re-lecturas del mismo nodo
-                if (!this.visitedNodes.has(slug) || this.currentNode !== slug || this.replayActive) {
-                    this.pendingPulses.add(slug);
+                if (!this.visitedNodes.has(visitNode) || this.currentNode !== visitNode || this.replayActive) {
+                    this.pendingPulses.add(visitNode);
                 }
-                this.visitedNodes.add(slug);
-                this.nodePipes.set(slug, pipe);
-                if (e.tool === "okf_read") this.readNodes.add(slug);
-                this.currentNode = slug;
+                this.visitedNodes.add(visitNode);
+                this.nodePipes.set(visitNode, pipe);
+                if (pipe === "read") this.readNodes.add(visitNode);
+                this.currentNode = visitNode;
             }
             // Subgrafo del resultado: hereda el pipe de la tool que lo generó
             // (search result_nodes → pipe "search", graph → "search", etc.)
             if (Array.isArray(e.result_nodes)) {
-                const resPipe: PipeKey = (e.tool === "okf_traverse") ? "traverse" : "search";
+                const resPipe: PipeKey = (e.tool === "okf_traverse" || e.tool === "traverse") ? "traverse" : "search";
                 for (const p of e.result_nodes) {
                     const isNew = !this.visitedNodes.has(p);
                     if (this.settings.revealStagger > 0) {

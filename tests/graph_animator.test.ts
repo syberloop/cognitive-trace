@@ -316,6 +316,19 @@ describe("GraphAnimator replay audio sync", () => {
         expect(renderer.nodes[1].color).not.toBeNull();
     });
 
+    it("colorea el nodo de un traverse del CLI (params.target)", () => {
+        const renderer = makeRenderer(["decisions/implantacion-okf.md"]);
+        const app = { workspace: { on: vi.fn(), getLeavesOfType: vi.fn(() => [{ view: { renderer } }]) } } as any;
+        const animator = new GraphAnimator(app, { ...DEFAULT_SETTINGS, revealStagger: 0 });
+
+        animator.loadHistory([{
+            type: "tool", session: "cli", ts: "2026-09-10T15:00:00.000Z",
+            tool: "okf_traverse", params: { target: "decisions/implantacion-okf", depth: 1 }, exit_code: 0,
+        }]);
+
+        expect(renderer.nodes[0].color).not.toBeNull();
+    });
+
     it("reintenta la aparición de new si el índice del grafo llega tarde", () => {
         const renderer = makeRenderer(["insights/delayed.md"]);
         const delayedNode = renderer.nodes[0];
